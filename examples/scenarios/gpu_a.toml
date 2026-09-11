@@ -1,0 +1,26 @@
+# powermet explore scenario examples/scenarios/gpu_a.toml
+[defaults]
+design = "GPU_A"
+workload = "typical"
+
+[[scenario]]
+name = "routing -20% wire cap"
+scale = { wire_cap_pf = 0.8 }
+
+[[scenario]]
+name = "denser cells (+10% cell cap, -5% area)"
+scale = { cell_cap_pf = 1.1, area = 0.95 }
+
+[[scenario]]
+name = "clock 2.2 GHz on DVFS curve"
+frequency_ghz = 2.2
+
+[[scenario]]
+name = "clock 2.2 GHz, hold voltage"
+frequency_ghz = 2.2
+voltage_v = 0.80
+
+[[scenario]]
+name = "memory workload, -20% wire cap"
+workload = "memory"
+scale = { wire_cap_pf = 0.8 }
