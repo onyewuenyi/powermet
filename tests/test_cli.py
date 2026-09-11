@@ -120,3 +120,21 @@ def test_sources_and_design_type(workdir, capsys):
     assert run("ingest", "scan", "mock_runs") == 0
     assert run("db", "query", "SELECT DISTINCT design_type FROM build") == 0
     assert "cpu" in capsys.readouterr().out
+
+
+def test_closure_cli(workdir, capsys):
+    assert run("mock", "generate", "--designs", "2", "--builds", "4", "--fubs", "8",
+               "--workloads", "idle,typical", "--operating-points", "nom,turbo") == 0
+    assert run("ingest", "scan", "mock_runs") == 0
+    assert run("sanitize") == 0
+    assert "vectorless" in capsys.readouterr().out
+    assert run("budget", "check", "--history") == 0
+    out = capsys.readouterr().out
+    assert "POWER BUDGET STATUS" in out and "Milestone" in out
+    assert run("analyze", "hotspots", "--top", "3") == 0
+    assert "hotspot" in capsys.readouterr().out
+    assert run("qualify", "--a", "be_mw", "--b", "be_voltus_mw") == 0
+    assert "QUALIFICATION" in capsys.readouterr().out
+    assert run("intent", "show") == 0
+    assert "Power intent (UPF) coverage" in capsys.readouterr().out
+    assert run("db", "query", "SELECT COUNT(*) n FROM budget_status") == 0

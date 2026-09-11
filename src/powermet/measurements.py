@@ -18,7 +18,7 @@ import pandas as pd
 
 STAGE_OF_SOURCE = {
     "pprtl": "FE", "saif": "ACTIVITY",
-    "primepower": "BE", "primetime": "TIMING", "starrc": "PHYS", "implementation": "PHYS",
+    "primepower": "BE", "voltus": "BE", "primetime": "TIMING", "starrc": "PHYS", "implementation": "PHYS",
     "metadata": "DESIGN", "perf": "PERF",
 }
 STAGES = tuple(sorted(set(STAGE_OF_SOURCE.values())))

@@ -13,7 +13,10 @@ Layout (one run directory per design x build):
         implementation/qor_summary.rpt
         activity/<workload>.saif                 (SAIF in the physical hierarchy, as written by the FSDB -> SAIF flow)
         perf/<workload>_<op>.csv
+        voltus/<workload>_<op>/power_hier.rpt       (alternate signoff engine, only for some builds)
+        intent/<design>.upf                         (power intent: domains per partition, supply states)
     <root>/traces/<design>_phases.csv           (workload phase trace for performance-tool integration)
+    <root>/budgets.toml                         (power budgets per design / partition with milestone tolerances)
 
 With defects=True a handful of realistic problems are injected so `powermet sanitize`
 has something to find: alternate units (W, fF), a BE-renamed instance missing from the
@@ -61,6 +64,10 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
     d_units_rc = designs[2] if defects and len(designs) > 2 else None        # StarRC in fF
     stale_build = (designs[0], builds[1]) if defects and len(builds) > 1 else None
     stale_signoff = (designs[-1], builds[0]) if defects else None      # one StarRC report from an older run
+    vectorless_design = designs[1] if defects and len(designs) > 1 else None   # PrimePower for 'idle' run vectorless
+    voltus_builds = set(builds[-2:])                                     # alternate engine only on recent builds
+    upf_missing_part = (designs[0], builds[-1]) if defects else None     # newest build's UPF forgets one partition
+    upf_v_mismatch = designs[2] if defects and len(designs) > 2 else None  # UPF turbo state disagrees with metadata
 
     for (design, build), mrows in meas.groupby(["design", "build"], sort=True):
         run_dir = root / design / build
@@ -78,7 +85,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         zero_pp: str | None = None
         if defects:
             fubs = list(h.index)
-            if build == builds[-1]:   # newest build: BE renamed two FUBs after the map was made
+            if build == builds[-1] and design == designs[0]:   # newest build of one design: BE renamed two FUBs after the map
                 for f in rng.choice(fubs, size=2, replace=False):
                     renamed_unmapped.add(str(f))
             if build == builds[0] or build == builds[len(builds) // 2]:
@@ -99,9 +106,11 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         status = "superseded" if stale_build == (design, build) else "current"
         nom_op = op_table.get("nom") or next(iter(op_table.values()))
         sim_period_ps = round(1000.0 / nom_op["frequency_ghz"], 1)
+        b_idx = builds.index(build)
+        milestone = ["rtl", "synthesis", "placement", "route", "signoff"][min(4, round(b_idx * 4 / max(len(builds) - 1, 1)))]
         json.dump({
             "schema_version": "1", "design": design, "design_type": "cpu", "build": build, "build_date": m["build_date"],
-            "run_id": run_id, "status": status,
+            "run_id": run_id, "status": status, "milestone": milestone,
             "tools": {"pprtl": m["pprtl_version"], "primepower": m["primepower_version"],
                       "starrc": m["starrc_version"], "fusion": m["fusion_version"], "verdi": "V-2024.09"},
             "workloads": wls, "operating_points": op_table,
@@ -135,9 +144,10 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 top = design.lower() + "_top"
                 total = sub["be_mw"].sum()
                 scale = 1.0 if pp_unit == "mW" else 1e-3
+                vectorless = (design == vectorless_design and wl == "idle")
                 lines = ["*" * 60, "Report : power -hierarchy", f"Design : {top}",
                          f"Version: {m['primepower_version']}", f"Date   : {m['build_date']}", f"Run    : {run_id}",
-                         f"Scenario: {wl}@{op}", f"Power Units = 1{pp_unit}", "*" * 60,
+                         f"Scenario: {wl}@{op}", f"Activity: {'vectorless' if vectorless else 'SAIF'}", f"Power Units = 1{pp_unit}", "*" * 60,
                          f"{'':40}{'Int':>11}{'Switch':>11}{'Leak':>11}{'Total':>11}{'%':>7}",
                          f"{'Hierarchy':40}{'Power':>11}{'Power':>11}{'Power':>11}{'Power':>11}",
                          "-" * 91]
@@ -154,6 +164,8 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                         r = sub.loc[fub]
                         leaf = be_name(fub).split("/")[-1]
                         v = r["be_mw"]
+                        if vectorless:
+                            v = v * float(rng.uniform(0.85, 1.25))     # default-activity estimate: biased and noisier
                         if zero_pp == fub:
                             v = 0.0004
                         row = prow(4, f"{leaf} ({h.loc[fub, 'synth_object']})", v * scale, r["be_mw"] / total * 100)
@@ -163,6 +175,8 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
         if pp_unit != "W":
             log.append(f"{design}/{build}: PrimePower reported in mW (unit variant)")
+        if design == vectorless_design and "idle" in wls and build == builds[0]:
+            log.append(f"{design}/*: PrimePower 'idle' scenario is vectorless (default activity), values perturbed")
         if renamed_unmapped:
             log.append(f"{design}/{build}: BE renamed instances not in map: {sorted(renamed_unmapped)}")
         if dup_pp:
@@ -203,13 +217,18 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 out.mkdir(parents=True, exist_ok=True)
                 for mode, col, fname in (("rtl", "fe_logical_mw", "rtl_power.rpt"),
                                          ("physical-aware", "fe_physical_mw", "physical_power.rpt")):
+                    cg = mode == "physical-aware"
                     lines = ["PPRTL Power Report", f"Tool: PowerPro-RTL  Version: {m['pprtl_version']}",
                              f"Design: {design}   Build: {build}   Run: {run_id}", f"Mode: {mode}",
-                             f"Workload: {wl}   Operating point: {op}", "Power units: mW", "-" * 80,
-                             f"{'Hierarchy':44}{'Internal':>10}{'Switching':>11}{'Leakage':>9}{'Total':>9}", "-" * 80]
+                             f"Workload: {wl}   Operating point: {op}", "Activity: saif", "Power units: mW", "-" * 96,
+                             f"{'Hierarchy':44}{'Internal':>10}{'Switching':>11}{'Leakage':>9}{'Total':>9}" + ("{:>16}".format("ClockGatingEff") if cg else ""),
+                             "-" * 96]
                     for _, r in sub.iterrows():
                         v = r[col]
-                        lines.append(f"{h.loc[r['fub'], 'fe_hier']:44}{v*0.5:10.3f}{v*0.42:11.3f}{v*0.08:9.3f}{v:9.3f}")
+                        line = f"{h.loc[r['fub'], 'fe_hier']:44}{v*0.5:10.3f}{v*0.42:11.3f}{v*0.08:9.3f}{v:9.3f}"
+                        if cg:
+                            line += f"{r['cg_efficiency']:16.2f}"
+                        lines.append(line)
                     (out / fname).write_text("\n".join(lines) + "\n")
 
         # ---- starrc (build-level)
@@ -285,6 +304,41 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
             lines.append("))")
             (run_dir / "activity" / f"{wl}.saif").write_text("\n".join(lines) + "\n")
 
+        # ---- voltus (alternate signoff engine) on recent builds: small systematic bias vs PrimePower
+        if build in voltus_builds:
+            for wl in wls:
+                for op in ops:
+                    sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)]
+                    out = run_dir / "voltus" / f"{wl}_{op}"
+                    out.mkdir(parents=True, exist_ok=True)
+                    lines = ["Cadence Voltus Power Report", "Version: 23.10", f"Design: {top}   Run: {run_id}   Date: {m['build_date']}",
+                             f"Activity: SAIF   Scenario: {wl}@{op}", "Units: mW",
+                             f"{'Instance':44}{'Internal':>10}{'Switching':>11}{'Leakage':>9}{'Total':>9}"]
+                    for _, r in sub.iterrows():
+                        v = r["be_mw"] * 0.97 * float(rng.lognormal(0, 0.03))
+                        lines.append(f"{be_name(r['fub']):44}{v*0.5:10.2f}{v*0.42:11.2f}{v*0.08:9.2f}{v:9.2f}")
+                    (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
+
+        # ---- UPF power intent: one domain per partition, supply states per operating point
+        (run_dir / "intent").mkdir(exist_ok=True)
+        upf = [f"# UPF power intent for {design} {build}", "upf_version 2.1", "create_supply_port VSS", "create_supply_net VSS"]
+        skip_part = sorted(h["partition"].unique())[-1] if upf_missing_part == (design, build) else None
+        for part in sorted(h["partition"].unique()):
+            if part == skip_part:
+                continue
+            net = f"VDD_{part}"
+            upf += [f"create_supply_port {net}", f"create_supply_net {net}",
+                    f"create_power_domain PD_{part} -elements {{{top}/part_{part.lower()}}}",
+                    f"set_domain_supply_net PD_{part} -primary_power_net {net} -primary_ground_net VSS"]
+            states = " ".join(f"-state {{{op} {vals['voltage_v'] + (0.05 if (design == upf_v_mismatch and op == 'turbo' and part == sorted(h['partition'].unique())[0]) else 0.0):.3f}}}"
+                              for op, vals in op_table.items())
+            upf.append(f"add_port_state {net} {states} -state {{off off}}")
+        (run_dir / "intent" / f"{design.lower()}.upf").write_text("\n".join(upf) + "\n")
+        if skip_part:
+            log.append(f"{design}/{build}: UPF omits partition {skip_part} (FUBs without a power domain)")
+        if design == upf_v_mismatch and build == builds[0]:
+            log.append(f"{design}/*: UPF turbo state voltage differs from metadata for the first partition")
+
         # ---- perf per workload x op
         (run_dir / "perf").mkdir(exist_ok=True)
         for wl in wls:
@@ -293,6 +347,25 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 pd.DataFrame([{"metric": "ipc", "value": r["ipc"], "unit": "ops/cycle"},
                               {"metric": "throughput_gops", "value": r["throughput_gops"], "unit": "Gops/s"}]
                              ).to_csv(run_dir / "perf" / f"{wl}_{op}.csv", index=False)
+
+    # budgets: design totals at ~2% under the final build (so late builds sit at risk) and partition budgets
+    lines = ["# power budgets: scope = design | partition:<name> | fub:<name>; tolerance per milestone (%)",
+             "[defaults]", 'workload = "typical"', 'operating_point = "nom"',
+             "tolerance_pct = { rtl = 25, synthesis = 15, placement = 10, route = 5, signoff = 0 }", ""]
+    last = builds[-1]
+    wl0 = "typical" if "typical" in spec.workloads else spec.workloads[0]
+    op0 = "nom" if "nom" in spec.operating_points else spec.operating_points[0]
+    lines[2:4] = [f'workload = "{wl0}"', f'operating_point = "{op0}"']
+    for design in designs:
+        sub = meas[(meas.design == design) & (meas.build == last) & (meas.workload == wl0) & (meas.operating_point == op0)]
+        lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', f"be_mw = {sub['be_mw'].sum() * 0.98:.0f}", 'owner = "power lead"', ""]
+        hh = hier[hier.design == design]
+        for i, part in enumerate(sorted(hh["partition"].unique())):
+            fubs = hh[hh.partition == part]["fub"]
+            p_mw = sub[sub.fub.isin(fubs)]["be_mw"].sum()
+            factor = 1.06 if i % 3 == 0 else (0.95 if i % 3 == 1 else 1.0)
+            lines += ["[[budget]]", f'design = "{design}"', f'scope = "partition:{part}"', f"be_mw = {p_mw * factor:.0f}", ""]
+    (root / "budgets.toml").write_text("\n".join(lines) + "\n")
 
     if len(data.traces):
         (root / "traces").mkdir(exist_ok=True)

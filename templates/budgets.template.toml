@@ -1,0 +1,26 @@
+# Power budgets checked by `powermet budget check`.
+# scope: "design" | "partition:<name>" | "fub:<name>" | "model_root:<id>"
+# tolerance_pct: allowed overshoot per milestone (early estimates get more headroom); missing keys use the defaults below.
+[defaults]
+workload = "typical"
+operating_point = "nom"
+tolerance_pct = { rtl = 25, synthesis = 15, placement = 10, route = 5, signoff = 0 }
+
+[[budget]]
+design = "DESIGN_NAME"
+scope = "design"
+be_mw = 5000
+owner = "power lead"
+note = "product power target at the nominal corner, typical workload"
+
+[[budget]]
+design = "DESIGN_NAME"
+scope = "partition:PARTITION_A"
+be_mw = 1800
+tolerance_pct = { signoff = 2 }
+
+[[budget]]
+design = "DESIGN_NAME"
+scope = "fub:Scheduler"
+workload = "compute"
+be_mw = 120

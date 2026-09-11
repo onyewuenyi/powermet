@@ -39,6 +39,9 @@ class Config:
     source_patterns: dict[str, str] = field(default_factory=dict)   # per-source override of DEFAULT_PATTERN
     disabled_sources: list[str] = field(default_factory=list)
     strict_consistency: bool = True     # drop reports whose run id / build disagree with metadata.json
+    upf_pattern: str = "intent/*.upf"   # power intent under the run directory ("" to skip)
+    budgets_file: str = "budgets.toml"  # relative to the project root's parent (the working dir) unless absolute
+    qualify_tolerance_pct: float = 5.0
     # V1 sanitization
     stale_days: int = 120
     near_zero_mw: float = 0.01

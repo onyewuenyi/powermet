@@ -274,7 +274,91 @@ def build_report(project: Project, cfg: Config, df: pd.DataFrame, make_plots: bo
     L.append("")
     L.extend(_v1_v3_sections(project, cfg, df, meta))
     L.extend(_timing_energy_sections(project, cfg, df, meta))
+    L.extend(_closure_sections(project, cfg, df))
     return "\n".join(L)
+
+
+def _closure_sections(project: Project, cfg: Config, df: pd.DataFrame) -> list[str]:
+    """Budgets, power intent, qualification, hotspots."""
+    from pathlib import Path
+
+    L: list[str] = []
+    L.append("## 25. Power budgets by milestone")
+    L.append("")
+    cands = [Path(cfg.budgets_file), project.root / "budgets.toml", *sorted(Path.cwd().glob("*/budgets.toml"))]
+    bpath = next((c for c in cands if c.exists()), None)
+    if bpath:
+        try:
+            from powermet.budgets import check_budgets, load_budgets
+            from powermet.storage import load_dataset as _ld
+            raw = _ld(project, cfg, raw=True)
+            st = check_budgets(raw, load_budgets(bpath), lineage=load_table(project, "lineage"))
+            L.append(_md_table(["Design", "Scope", "Build", "Milestone", "Budget", "Actual", "FUBs", "Margin", "Trend", "Status"],
+                               [[s_.budget.design, s_.budget.scope, s_.build, s_.milestone, fmt_mw(s_.budget.be_mw), fmt_mw(s_.actual_mw),
+                                 f"{s_.fubs_measured}/{s_.fubs_expected}" if s_.fubs_expected else str(s_.fubs_measured),
+                                 fmt_pct(s_.margin_pct, True), fmt_pct(s_.trend_pct_per_build, True) + "/build" if np.isfinite(s_.trend_pct_per_build) else "n/a",
+                                 s_.status + ("" if s_.complete else " (INCOMPLETE)")] for s_ in st]))
+            L.append("")
+            L.append("Budgets are checked against the raw dataset; INCOMPLETE marks scopes whose FUBs are not all measured, so the actual is an undercount.")
+        except Exception as exc:
+            L.append(f"_Budget check unavailable: {exc}_")
+    else:
+        L.append("_No budgets.toml found (see templates/budgets.template.toml)._")
+    L.append("")
+
+    L.append("## 26. Power intent (UPF) consistency")
+    L.append("")
+    intent = load_table(project, "power_intent")
+    if len(intent):
+        from powermet.intent import render_intent_summary
+        L.append("```")
+        L.append(render_intent_summary(intent))
+        L.append("```")
+        bad = intent[~intent["intent_ok"]]
+        if len(bad):
+            counts = bad["intent_issues"].str.split(";").explode().value_counts()
+            L.append("")
+            L.append(_md_table(["Issue", "FUB/build entries"], [[k, v] for k, v in counts.items()]))
+    else:
+        L.append("_No UPF ingested._")
+    L.append("")
+
+    L.append("## 27. Engine qualification")
+    L.append("")
+    if "be_voltus_mw" in df.columns and df["be_voltus_mw"].notna().any():
+        try:
+            from powermet.qualify import qualify
+            q = qualify(df, "be_mw", "be_voltus_mw", cfg.qualify_tolerance_pct)
+            m = q.metrics
+            L.append(f"`be_voltus_mw` vs reference `be_mw` on {q.scope}: **{q.verdict}** (tolerance MAPE <= {q.tolerance_pct:g}%).")
+            L.append("")
+            L.append(_md_table(["n", "MAPE", "P50", "P95", "bias", "r"],
+                               [[q.n, fmt_pct(m["mape"]), fmt_pct(m["p50_ape"]), fmt_pct(m["p95_ape"]), fmt_pct(q.bias_pct, True), fmt_r(q.r)]]))
+        except Exception as exc:
+            L.append(f"_Qualification unavailable: {exc}_")
+    else:
+        L.append("_No second engine ingested (optional `voltus/` source)._")
+    L.append("")
+
+    L.append("## 28. Hotspots and inefficiencies")
+    L.append("")
+    try:
+        from powermet.hotspots import hotspots
+        for d in sorted(df["design"].astype(str).unique()):
+            rep = hotspots(df, d)
+            key = "model_root" if "model_root" in rep.table.columns else "fub"
+            top = rep.table.head(5)
+            L.append(f"**{d} / {rep.build}**" + (f" vs {rep.prev_build}" if rep.prev_build else ""))
+            L.append("")
+            L.append(_md_table(["FUB", "Power", "Share", "mW/um2", "dPrev", "CG eff", "Flags"],
+                               [[r[key], fmt_mw(r["be_mw"]), fmt_pct(r["share_pct"]), f"{r['power_density']:.4f}" if pd.notna(r["power_density"]) else "n/a",
+                                 fmt_pct(r["delta_pct"], True) if pd.notna(r["delta_pct"]) else "n/a",
+                                 f"{r['cg_efficiency']:.2f}" if "cg_efficiency" in top.columns and pd.notna(r["cg_efficiency"]) else "n/a", r["flags"]]
+                                for _, r in top.iterrows()]))
+            L.append("")
+    except Exception as exc:
+        L.append(f"_Hotspot analysis unavailable: {exc}_")
+    return L
 
 
 def _timing_energy_sections(project: Project, cfg: Config, df: pd.DataFrame, meta: dict | None) -> list[str]:

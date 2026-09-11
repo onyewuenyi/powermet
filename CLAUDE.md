@@ -19,6 +19,7 @@ abstractions. `docs/portability.md` is the adaptation checklist; keep it and `po
 - `src/powermet/extract/` — one adapter per EDA source (`get_files()` locates, `parse()` reads). Contract in `base.py`.
 - `identity.py` (ModelRoot), `lineage.py`, `measurements.py` (MeasurementStore), `selection.py` (DatasetSlice), `pipeline.py` (ingest).
 - `sanitize.py` (quality checks registry + per-metric trust), `validation.py`, `catalog.py` (SQLite), `profiling.py`.
+- Power closure: `budgets.py` (milestone budgets), `intent.py` (UPF), `qualify.py` (engine/estimator qualification), `hotspots.py`.
 - `modeling.py` (MODEL_REGISTRY, build-based split/CV), `features.py`, `decomposition.py`, `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `explore.py`, `integrate.py`.
 - `cli.py` is argparse only; business logic lives in modules. `reporting.py` builds the 24-section Markdown report.
 - `docs/reusable-components.md` maps every liftable abstraction to module, deps and tests. `docs/methodology.md`, `docs/extractors.md`.

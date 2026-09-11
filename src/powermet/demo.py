@@ -117,6 +117,7 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
         avg_net_len = 12.0 * np.sqrt(area / 1000.0) * (0.8 + 0.08 * (fanout - 5.0)) * rng.lognormal(0, 0.2, size=n_fubs)
         wire_length = avg_net_len * net_count
         bus_width = rng.choice([8, 16, 32, 64], size=n_fubs).astype(float)   # nets carrying data traffic (written to SAIF)
+        cg_eff = np.clip(rng.beta(5, 2, size=n_fubs), 0.2, 0.98)                # clock-gating efficiency per FUB
         # partitions: contiguous groups of FUBs; timing is a partition attribute
         n_parts = max(1, min(len(PARTITION_NAMES), n_fubs // 6))
         part_of = [PARTITION_NAMES[(i * n_parts) // n_fubs] for i in range(n_fubs)]
@@ -227,6 +228,7 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
                             "wire_length_um": round(float(wlen[i]), 1),
                             "avg_net_length_um": round(float(wlen[i] / (cc[i] * 0.36)), 3),
                             "bits_per_cycle": round(float(bits[i]), 3),
+                            "cg_efficiency": round(float(cg_eff[i]), 2),
                             "clock_period_ps": round(per, 1), "wns_ps": round(wns, 1), "tns_ps": round(tns, 1),
                             "violating_endpoints": float(viol),
                             "fmax_ghz": round(1000.0 / (per - wns), 4),

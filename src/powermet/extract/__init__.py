@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from powermet.extract import implementation, metadata, perf, pprtl, primepower, primetime, saif, starrc
+from powermet.extract import implementation, metadata, perf, pprtl, primepower, primetime, saif, starrc, voltus
 
-SOURCES = {m.SOURCE: m for m in (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf)}
+SOURCES = {m.SOURCE: m for m in (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf, voltus)}
 
 # metrics each source is expected to deliver (used by lineage/sanitize to report gaps)
 SOURCE_METRICS = {
-    "pprtl": ("fe_logical_mw", "fe_physical_mw"),
+    "pprtl": ("fe_logical_mw", "fe_physical_mw", "cg_efficiency"),
     "primepower": ("be_mw",),
+    "voltus": ("be_voltus_mw",),
     "starrc": ("wire_cap_pf", "cell_cap_pf"),
     "implementation": ("area", "cell_count", "fanout", "wire_length_um", "avg_net_length_um"),
     "saif": ("activity", "bits_per_cycle", "net_count"),
@@ -23,6 +24,8 @@ METRIC_SCOPE = {
     "fe_logical_mw": ("workload", "operating_point"),
     "fe_physical_mw": ("workload", "operating_point"),
     "be_mw": ("workload", "operating_point"),
+    "be_voltus_mw": ("workload", "operating_point"),
+    "cg_efficiency": ("workload", "operating_point"),
     "activity": ("workload",),
     "bits_per_cycle": ("workload",),
     "net_count": (),

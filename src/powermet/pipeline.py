@@ -22,6 +22,7 @@ from powermet.extract.base import ParseError, ParsedReport
 from powermet.extract.metadata import inputs_from_metadata
 from powermet.identity import ModelRoot
 from powermet.ingest import file_sha256, write_table
+from powermet.intent import DEFAULT_PATTERN as UPF_PATTERN, intent_table, load_upf
 from powermet.lineage import DESIGN_FUB, resolve
 from powermet.metrics import add_derived_metrics, fmax_from_timing
 from powermet.profiling import Profiler
@@ -47,6 +48,7 @@ class RunResult:
     flags: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     status: str = "current"
+    intent: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -91,7 +93,8 @@ def extract_run(run_dir: Path, cfg: Config, prof: Profiler | None = None) -> Run
                 continue
             located = mod.get_files(inputs)
             if not located:
-                errors.append(f"{name}: no files matched pattern '{inputs.pattern_for(name, mod.DEFAULT_PATTERN)}'")
+                if not getattr(mod, "OPTIONAL", False):
+                    errors.append(f"{name}: no files matched pattern '{inputs.pattern_for(name, mod.DEFAULT_PATTERN)}'")
                 continue
             for loc in located:
                 try:
@@ -120,12 +123,29 @@ def extract_run(run_dir: Path, cfg: Config, prof: Profiler | None = None) -> Run
         wide = pivot_fub_records(lin.mapped)
         wide = attach_identity(wide, model)
         wide["fmax_ghz"] = fmax_from_timing(wide["clock_period_ps"], wide["wns_ps"])
+        wide = attach_activity_mode(wide, lin.mapped)
         wide = stamp_provenance(wide, design, build, meta, run_dir)
         perf = pivot_perf_records(lin.mapped, design, build)
         st.rows = len(wide)
 
+    with prof.stage("power intent (UPF)", detail=f"{design}/{build}") as st:
+        intent = pd.DataFrame()
+        upf_files = sorted(run_dir.glob(cfg.upf_pattern or UPF_PATTERN))
+        if upf_files:
+            try:
+                pi = load_upf(upf_files[0])
+                intent = intent_table(pi, model, design, build, meta.get("operating_points") or {})
+                wide = wide.merge(intent[["fub", "power_domain"]], on="fub", how="left")
+                bad = intent[~intent["intent_ok"]]
+                lin.flags.extend(f"{r.fub}: {r.intent_issues}" for r in bad.itertuples())
+            except (ValueError, OSError) as exc:
+                errors.append(f"upf: {upf_files[0].name}: {exc}")
+        if "power_domain" not in wide.columns:
+            wide["power_domain"] = None
+        st.rows = len(intent)
+
     return RunResult(design, build, run_dir, reports, lin.mapped, wide, perf, lin.lineage, lin.unmapped,
-                     lin.flags, errors, str(meta.get("status", "current")))
+                     lin.flags, errors, str(meta.get("status", "current")), intent)
 
 
 def _normalize(reports: list[ParsedReport], design: str, build: str, meta: dict) -> pd.DataFrame:
@@ -143,6 +163,7 @@ def _normalize(reports: list[ParsedReport], design: str, build: str, meta: dict)
         r["tool"], r["tool_version"] = rep.tool, rep.tool_version
         r["run_id"] = rep.run_id or meta.get("run_id")
         r["report_date"] = rep.report_date or meta.get("build_date")
+        r["activity_mode"] = rep.activity_mode
         frames.append(r)
     if not frames:
         return pd.DataFrame(columns=["object", "object_kind", "metric", "value", "unit", "unit_original",
@@ -203,6 +224,19 @@ def pivot_fub_records(mapped: pd.DataFrame, metrics: tuple[str, ...] = FUB_METRI
     return wide
 
 
+def attach_activity_mode(wide: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFrame:
+    """Carry the activity source (vector-based vs vectorless) of the BE power number onto each row."""
+    if "activity_mode" not in mapped.columns:
+        return wide.assign(be_activity_mode=None)
+    be = mapped[(mapped["metric"] == "be_mw") & (mapped["fub"] != DESIGN_FUB)][["fub", "workload", "operating_point", "activity_mode"]].copy()
+    if not len(be):
+        return wide.assign(be_activity_mode=None)
+    for k in ("workload", "operating_point"):
+        be[k] = be[k].fillna(DEFAULT_SCOPE_VALUE)
+    be = be.drop_duplicates(subset=["fub", "workload", "operating_point"]).rename(columns={"activity_mode": "be_activity_mode"})
+    return wide.merge(be, on=["fub", "workload", "operating_point"], how="left")
+
+
 def attach_identity(wide: pd.DataFrame, model: ModelRoot) -> pd.DataFrame:
     """Add model_root / partition from the model root, placed right after fub."""
     ident = model.to_frame()[["fub", "model_root", "partition"]]
@@ -221,6 +255,7 @@ def stamp_provenance(wide: pd.DataFrame, design: str, build: str, meta: dict, ru
     out["build_date"] = meta.get("build_date")
     out["build_status"] = meta.get("status", "current")
     out["design_type"] = meta.get("design_type", "unspecified")
+    out["milestone"] = meta.get("milestone", "signoff")
     out["source_file"] = str(run_dir)
     out["tool"] = "pipeline"
     out["tool_version"] = ";".join(f"{k}={v}" for k, v in (meta.get("tools") or {}).items())
@@ -263,6 +298,7 @@ def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = Non
         wide = pd.concat([r.wide for r in results], ignore_index=True) if results else pd.DataFrame()
         long = pd.concat([r.long for r in results], ignore_index=True) if results else pd.DataFrame()
         perf = pd.concat([r.perf for r in results], ignore_index=True) if results else pd.DataFrame()
+        intent = pd.concat([r.intent for r in results if len(r.intent)], ignore_index=True) if any(len(r.intent) for r in results) else pd.DataFrame()
         lineage = pd.concat([r.lineage for r in results], ignore_index=True) if results else pd.DataFrame()
         unmapped = pd.concat([r.unmapped for r in results], ignore_index=True) if results else pd.DataFrame()
         report = validate(wide) if len(wide) else None
@@ -283,9 +319,9 @@ def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = Non
             # always merge into the RAW dataset (never the sanitized view) so flagged rows are never lost
             old = load_dataset(project, cfg, raw=True)
             wide = pd.concat([old, wide], ignore_index=True).drop_duplicates(subset=list(KEY_COLUMNS), keep="last")
-            for name, new in (("measurements_long", long), ("lineage", lineage), ("unmapped", unmapped), ("performance", perf)):
+            for name, new in (("measurements_long", long), ("lineage", lineage), ("unmapped", unmapped), ("performance", perf), ("power_intent", intent)):
                 old_p = pdir / f"{name}.parquet"
-                if old_p.exists():
+                if old_p.exists() and len(new) and {"design", "build"} <= set(new.columns):
                     prev = pd.read_parquet(old_p)
                     # a re-ingested (design, build) replaces its previous rows in every auxiliary table
                     key = new[["design", "build"]].drop_duplicates()
@@ -298,13 +334,16 @@ def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = Non
                     lineage = new
                 elif name == "unmapped":
                     unmapped = new
-                else:
+                elif name == "performance":
                     perf = new
+                else:
+                    intent = new
         ds_path = write_table(wide, project.root / cfg.dataset)
         write_table(long, pdir / "measurements_long.parquet")
         write_table(lineage, pdir / "lineage.parquet")
         write_table(unmapped, pdir / "unmapped.parquet")
         write_table(perf, pdir / "performance.parquet")
+        write_table(intent, pdir / "power_intent.parquet")
         if len(rejected):
             write_table(rejected, project.root / cfg.rejected)
         # any previous sanitized dataset is now stale
@@ -314,7 +353,7 @@ def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = Non
         register_views(project, {
             "measurements": ds_path, "measurements_long": pdir / "measurements_long.parquet",
             "lineage": pdir / "lineage.parquet", "unmapped": pdir / "unmapped.parquet",
-            "performance": pdir / "performance.parquet",
+            "performance": pdir / "performance.parquet", "power_intent": pdir / "power_intent.parquet",
         })
         _log_imports(project, results, ds_path)
 

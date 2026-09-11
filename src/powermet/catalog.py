@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS model (
     model_file TEXT PRIMARY KEY, created_at TEXT, best_model TEXT, best_mape REAL, baseline_mape REAL,
     test_builds TEXT, dataset_sha256 TEXT, metrics TEXT
 );
+CREATE TABLE IF NOT EXISTS budget_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    checked_at TEXT, design TEXT, scope TEXT, workload TEXT, operating_point TEXT, build TEXT, milestone TEXT,
+    budget_mw REAL, actual_mw REAL, tolerance_pct REAL, margin_pct REAL, status TEXT
+);
 CREATE TABLE IF NOT EXISTS profile_run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command TEXT, started_at TEXT, total_wall_s REAL, peak_rss_mb REAL, python TEXT, stages TEXT
@@ -118,6 +123,15 @@ def record_model(project, meta: dict, best: str) -> None:
                     (meta["model_file"], meta["created_at"], best, meta["metrics"][best].get("mape"),
                      meta["metrics"]["baseline"].get("mape"), json.dumps(meta["test_builds"]), meta.get("dataset_sha256"),
                      json.dumps(meta["metrics"])))
+
+
+def record_budgets(project, statuses) -> None:
+    with connect(project) as con:
+        con.executemany(
+            "INSERT INTO budget_status (checked_at, design, scope, workload, operating_point, build, milestone, budget_mw, actual_mw, "
+            "tolerance_pct, margin_pct, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(_now(), s.budget.design, s.budget.scope, s.budget.workload, s.budget.operating_point, s.build, s.milestone,
+              s.budget.be_mw, s.actual_mw, s.tolerance_pct, s.margin_pct, s.status) for s in statuses])
 
 
 def record_profile(project, d: dict) -> None:

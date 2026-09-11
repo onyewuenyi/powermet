@@ -48,6 +48,7 @@ CANONICAL_UNITS = {
     "frequency_ghz": "GHz", "voltage_v": "V", "activity": "ratio",
     "ipc": "ops/cycle", "throughput_gops": "Gops/s",
     "wire_length_um": "um", "avg_net_length_um": "um", "bits_per_cycle": "bits", "net_count": "count",
+    "be_voltus_mw": "mW", "cg_efficiency": "ratio",
     "clock_period_ps": "ps", "wns_ps": "ps", "tns_ps": "ps", "violating_endpoints": "count",
 }
 
@@ -85,6 +86,7 @@ class ParsedReport:
     run_id: str | None = None
     report_date: str | None = None
     build: str | None = None           # build named in the report header, when the tool prints one
+    activity_mode: str | None = None   # "saif" / "fsdb" (vector-based) or "vectorless" when the tool states it
     workload: str | None = None
     operating_point: str | None = None
     notes: list[str] = field(default_factory=list)

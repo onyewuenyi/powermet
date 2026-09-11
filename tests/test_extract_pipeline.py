@@ -49,6 +49,8 @@ def test_every_parser_reads_mock(mock_root):
     inputs, meta = inputs_from_metadata(root / "GPU_A" / "B001")
     for name, mod in SOURCES.items():
         files = mod.get_files(inputs)
+        if not files and getattr(mod, "OPTIONAL", False):
+            continue                       # e.g. voltus is only present on recent builds
         assert files, name
         rep = mod.parse(files[0].path, **files[0].context)
         assert rep.n_records > 0, name

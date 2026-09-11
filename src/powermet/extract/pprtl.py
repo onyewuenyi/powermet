@@ -7,11 +7,14 @@ Representative format (one file per workload x operating point; Mode header sele
     Design: GPU_A   Build: B001   Run: gpu_a_b001_r1234
     Mode: rtl                          (or: physical-aware)
     Workload: typical   Operating point: nom
+    Activity: saif                     (or: vectorless -> lower-trust estimate)
     Power units: mW
     ------------------------------------------------------------------
-    Hierarchy                    Internal   Switching   Leakage    Total
+    Hierarchy                    Internal   Switching   Leakage    Total   [ClockGatingEff]
     ------------------------------------------------------------------
-    gpu_a_top/u_scheduler          40.123      35.111     5.223   80.457
+    gpu_a_top/u_scheduler          40.123      35.111     5.223   80.457    0.82
+
+ClockGatingEff (optional) is the fraction of register clock pins gated, emitted as `cg_efficiency`.
 """
 
 from __future__ import annotations
@@ -45,14 +48,17 @@ def parse(path: Path, **context) -> ParsedReport:
     unit = units_from_text(hdr.get("power units", "mW"), "mW")
     start = find_table_start(lines, "Hierarchy")
     rows, notes = [], []
+    has_cg = "ClockGatingEff" in "".join(lines[max(start - 3, 0):start])
     for line in lines[start:]:
         parts = line.split()
         if len(parts) < 5 or parts[0].startswith(("-", "=")):
             continue
-        raw = to_float(parts[-1])
-        val, cu = convert_unit(raw, unit, metric)
+        val, cu = convert_unit(to_float(parts[4]), unit, metric)          # columns: hier, int, sw, leak, total[, cg]
         rows.append({"object": parts[0], "object_kind": OBJECT_KIND, "metric": metric,
                      "value": val, "unit": cu, "unit_original": unit})
+        if has_cg and len(parts) >= 6 and metric == "fe_physical_mw":
+            rows.append({"object": parts[0], "object_kind": OBJECT_KIND, "metric": "cg_efficiency",
+                         "value": to_float(parts[5]), "unit": "ratio", "unit_original": "ratio"})
     if unit != "mW":
         notes.append(f"power converted from {unit} to mW")
     return ParsedReport(
@@ -60,5 +66,5 @@ def parse(path: Path, **context) -> ParsedReport:
         records=make_records(rows), run_id=hdr.get("run"), report_date=hdr.get("date"), build=hdr.get("build"),
         workload=context.get("workload") or hdr.get("workload"),
         operating_point=context.get("operating_point") or hdr.get("operating point"),
-        notes=notes,
+        activity_mode=(hdr.get("activity") or "").lower() or None, notes=notes,
     )

@@ -11,6 +11,7 @@ full path from indentation.
     Date   : 2026-03-02
     Run    : gpu_a_b001_r1234
     Scenario: typical@nom
+    Activity: SAIF                     (or: vectorless)
     Power Units = 1W
     ****************************************
                                      Int      Switch   Leak     Total
@@ -81,5 +82,6 @@ def parse(path: Path, **context) -> ParsedReport:
         source=SOURCE, path=Path(path), tool=tool_name(hdr, "PrimePower"), tool_version=hdr.get("version", "?"),
         records=rec, run_id=hdr.get("run"), report_date=hdr.get("date"),
         workload=context.get("workload") or (wl or None),
-        operating_point=context.get("operating_point") or (op or None), notes=notes,
+        operating_point=context.get("operating_point") or (op or None),
+        activity_mode=(hdr.get("activity") or "").lower() or None, notes=notes,
     )

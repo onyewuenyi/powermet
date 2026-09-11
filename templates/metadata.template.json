@@ -6,6 +6,7 @@
   "build_date": "2026-01-15",
   "run_id": "signoff run identifier shared by every report in this directory",
   "status": "current | superseded",
+  "milestone": "rtl | synthesis | placement | route | signoff",
   "model_version": "optional model-root / RTL model version",
   "tools": {"pprtl": "R-2025.06", "primepower": "V-2024.09", "primetime": "V-2024.09", "starrc": "V-2024.09", "fusion": "V-2024.09", "verdi": "V-2024.09"},
   "workloads": ["typical", "compute", "memory"],

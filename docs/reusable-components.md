@@ -28,6 +28,10 @@ lists the powermet modules it imports; anything not listed is standalone apart f
 | What-if | `whatif.py` | `Override` / `parse_override()` aliases, `run_whatif()` with CV interval | `features`, `modeling`, `selection` | `test_units_analysis.py`, `test_v2_v3.py` |
 | Exploration | `explore.py` | `Explorer.sweep/opmap/scenarios`, timing feasibility, `mark_pareto()`, TOML scenarios | `curves`, `features`, `selection`, `whatif` | `test_units_analysis.py::test_mark_pareto_with_infeasible_and_ties`, `test_v2_v3.py`, `test_timing_energy.py` |
 | **Compact model / integration** | `integrate.py` | `export_compact()` JSON, `CompactPowerModel` standalone evaluator (matches `LinearModel.predict` exactly), `run_trace()` | `curves`, `features`, `modeling` | `test_units_analysis.py` (equivalence, f/V traces, fmax guards), `test_timing_energy.py` |
+| Power budgets | `budgets.py` | `Budget` / `load_budgets()` (TOML with per-milestone tolerance), `check_budgets()` with trend, FUB coverage and status, `classify_status()` | `selection` | `test_closure.py` |
+| Power intent | `intent.py` | `parse_upf()` (domains, supplies, port states), `intent_table()` FUB -> domain with consistency issues | `identity` | `test_closure.py` |
+| Qualification | `qualify.py` | `qualify(df, a, b, tolerance)` any two estimates of one quantity: MAPE / P95 / bias / r, per partition, worst, PASS / FAIL | `metrics`, `selection` | `test_closure.py` |
+| Hotspots | `hotspots.py` | share, density, growth vs previous build, clock-gating efficiency flags, partition rollup | `selection` | `test_closure.py` |
 | Text output | `textfmt.py` | fixed-width `table()`, `fmt_pct/fmt_mw/fmt_r` with sensible rounding | – | indirectly everywhere |
 
 ## Templates for a new environment

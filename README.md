@@ -27,6 +27,7 @@ was written against.
 | **V2** | Can I predict BE power before BE is complete? | `model train --cv`, `model validate`, `model predict` |
 | **V3** | Can I answer workload / design what-if questions? | `workload summary`, `explore sweep/opmap/scenario`, `model export`, `integrate trace` |
 | **Timing** | What physical changes improve timing but hurt power? | `analyze deltas`, `analyze frontier`, timing-feasible `explore` |
+| **Closure** | Are we within budget at this milestone, is the power intent consistent, can I trust this engine? | `budget check`, `intent show`, `qualify`, `analyze hotspots` |
 
 ## Install
 
@@ -58,6 +59,10 @@ powermet workload summary                     # power, throughput, pJ/op by work
 powermet explore sweep --design GPU_A --workload compute --param frequency_ghz --values 1.6,1.8,2.0,2.2,2.4
 powermet explore opmap --design GPU_A --add "v=0.78,f=2.3"
 powermet explore scenario examples/scenarios/gpu_a.toml
+powermet budget check --history               # budgets per design/partition vs milestone tolerance; ON TRACK / AT RISK / OVER
+powermet analyze hotspots --design GPU_A      # share, power density, growth vs previous build, clock-gating efficiency
+powermet qualify --a be_mw --b be_voltus_mw   # engine-to-engine qualification with a tolerance and PASS/FAIL
+powermet intent show                          # UPF domains per FUB, missing domains, voltage mismatches
 powermet model export                         # compact JSON power model for a performance simulator
 powermet integrate trace mock_runs/traces/GPU_A_phases.csv   # power / throughput / energy timeline of a phase trace
 powermet measure get --fub Scheduler --design GPU_A --stage FE --metric fe_physical_mw   # one number with provenance
@@ -84,7 +89,10 @@ The V0 flat-file path still works: `powermet demo generate`, `powermet data vali
   starrc/parasitics_summary.rpt           wire cap / pin cap per BE hierarchy
   implementation/qor_summary.rpt          area, cell count, fanout, wire length, avg net length per BE hierarchy
   activity/<wl>.saif                      SAIF in the physical hierarchy from the FSDB -> SAIF flow (activity, bits switched/cycle)
-  perf/<wl>_<op>.csv                      design-level ipc / throughput
+  perf/<wl>_<op>.csv                      design-level ipc / throughput (optional)
+  voltus/<wl>_<op>/power_hier.rpt         second signoff engine (optional), for `qualify`
+  intent/<design>.upf                     power intent: domains, supplies, port states
+<root>/budgets.toml                       power budgets with per-milestone tolerance
 <root>/traces/<design>_phases.csv         workload phase trace for `integrate trace`
 ```
 
@@ -147,6 +155,12 @@ long provenance table. See `docs/extractors.md`.
   power-for-performance trade; `analyze frontier` plots power vs worst-partition Fmax across builds.
 - **Energy decomposition**: `analyze energy` splits predicted power into compute, wire, data-movement and
   leakage shares and reports the fitted pJ per bit-mm.
+- **Power closure**: `budget check` tracks budgets per design / partition / FUB against a per-milestone
+  tolerance with trend, FUB coverage and the model's error band; `intent show` verifies UPF domains and
+  supply states against the operating points; `qualify` compares two estimates of the same quantity (engine
+  vs engine, version vs version, vectorless vs SAIF) with a PASS / FAIL against a tolerance; `analyze
+  hotspots` ranks power share, density, growth and clock-gating efficiency. Vectorless BE numbers carry
+  `be_activity_mode` and are flagged lower-trust.
 - **Integration**: `model export` writes a compact JSON model (per-FUB physical features, per-workload
   activity/traffic, operating points, DVFS, throughput scaling, partition timing); `integrate trace`
   evaluates a workload phase trace into a power / throughput / energy timeline with timing feasibility.
@@ -180,7 +194,8 @@ module, its dependencies and the tests that pin its behaviour.
 `src/powermet/`: `cli.py`, `extract/` (base, metadata, pprtl, primepower, primetime, starrc, implementation,
 activity, perf), `identity.py`, `lineage.py`, `measurements.py`, `selection.py`, `pipeline.py`, `sanitize.py`,
 `catalog.py`, `profiling.py`, `mockdata.py`, `demo.py`, `schema.py`, `validation.py`, `ingest.py`, `storage.py`,
-`metrics.py`, `features.py`, `correlation.py`, `errors.py`, `summary.py`, `modeling.py`, `decomposition.py`,
+`metrics.py`, `features.py`, `correlation.py`, `errors.py`, `summary.py`, `budgets.py`, `intent.py`, `qualify.py`,
+`hotspots.py`, `modeling.py`, `decomposition.py`,
 `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `workload.py`, `explore.py`, `integrate.py`,
 `visualization.py`, `reporting.py` (`energy.py` is a compatibility facade).
 

@@ -41,6 +41,9 @@ CHECKS: dict[str, tuple[str, bool]] = {
     "lineage_mismatch": ("FE/BE lineage mismatches", True),
     "timing_missing": ("Timing missing (partition not in PrimeTime)", False),
     "timing_suspect": ("Timing inconsistencies (WNS > period, negative period)", False),
+    "vectorless_power": ("BE power from vectorless activity (lower trust)", False),
+    "intent_missing": ("No UPF power domain for FUB", False),
+    "intent_mismatch": ("UPF voltage != operating point voltage", False),
     "unmapped_objects": ("Unmapped report objects", False),
 }
 BLOCKING_LINEAGE = BLOCKING_ISSUES
@@ -98,7 +101,7 @@ class QualityReport:
 
 
 def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, lineage: pd.DataFrame | None = None,
-             unmapped: pd.DataFrame | None = None) -> QualityReport:
+             unmapped: pd.DataFrame | None = None, intent: pd.DataFrame | None = None) -> QualityReport:
     n = len(df)
     flags: dict[int, list[str]] = {}
     counts: dict[str, int] = {}
@@ -208,6 +211,25 @@ def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, li
         ts = ((wns > per) | (per <= 0)).fillna(False).to_numpy()
     mark("timing_suspect", ts)
 
+    # 11 activity provenance and power intent (informational)
+    vl = np.zeros(n, dtype=bool)
+    if "be_activity_mode" in df.columns:
+        vl = df["be_activity_mode"].astype(str).str.lower().str.startswith("vectorless").to_numpy()
+    mark("vectorless_power", vl)
+    im = np.zeros(n, dtype=bool)
+    mm = np.zeros(n, dtype=bool)
+    if intent is not None and len(intent):
+        key = df["design"].astype(str) + "|" + df["build"].astype(str) + "|" + df["fub"].astype(str)
+        ikey = intent["design"].astype(str) + "|" + intent["build"].astype(str) + "|" + intent["fub"].astype(str)
+        issues = intent["intent_issues"].astype(str)
+        im = key.isin(set(ikey[issues.str.contains("no_power_domain|multiple_power_domains")])).to_numpy()
+        mm = key.isin(set(ikey[issues.str.contains("domain_voltage_mismatch|domain_state_missing")])).to_numpy()
+        det = sorted(set(intent.loc[issues.str.contains("mismatch"), "voltage_mismatch"].astype(str)))[:8]
+        mark("intent_mismatch", mm, det)
+    else:
+        mark("intent_mismatch", mm)
+    mark("intent_missing", im)
+
     # long-table derived info
     n_unit = n_dup_src = 0
     if long is not None and len(long):
@@ -232,8 +254,8 @@ def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, li
 
 # ----------------------------------------------------------------------------- per-metric trust
 
-TRUST_METRICS = ("fe_logical_mw", "fe_physical_mw", "wire_cap_pf", "cell_cap_pf", "area", "cell_count", "fanout",
-                 "activity", "bits_per_cycle", "wire_length_um", "avg_net_length_um", "frequency_ghz", "voltage_v",
+TRUST_METRICS = ("fe_logical_mw", "fe_physical_mw", "be_voltus_mw", "wire_cap_pf", "cell_cap_pf", "area", "cell_count", "fanout",
+                 "activity", "bits_per_cycle", "cg_efficiency", "wire_length_um", "avg_net_length_um", "frequency_ghz", "voltage_v",
                  "wns_ps", "fmax_ghz")
 
 
@@ -301,7 +323,9 @@ def run_sanitize(project: Project, cfg: Config | None = None, write: bool = True
     cfg = cfg or project.load_config()
     df = load_dataset(project, cfg, raw=True)
     long, lineage, unmapped = load_table(project, "measurements_long"), load_table(project, "lineage"), load_table(project, "unmapped")
-    rep = sanitize(df, cfg, long if len(long) else None, lineage if len(lineage) else None, unmapped if len(unmapped) else None)
+    intent = load_table(project, "power_intent")
+    rep = sanitize(df, cfg, long if len(long) else None, lineage if len(lineage) else None, unmapped if len(unmapped) else None,
+                   intent if len(intent) else None)
     rep.metric_quality = metric_quality(df, long if len(long) else None, cfg.target)
     flagged = df.copy()
     flagged["quality_flags"] = rep.flags.to_numpy()

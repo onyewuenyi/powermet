@@ -40,6 +40,8 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("fe_logical_mw", "float", POWER, required=True, non_negative=True, description="FE logical power estimate (mW)"),
     ColumnSpec("fe_physical_mw", "float", POWER, required=True, non_negative=True, description="FE physically-aware power estimate (mW)"),
     ColumnSpec("be_mw", "float", POWER, required=True, non_negative=True, description="BE signoff power (mW)"),
+    ColumnSpec("be_voltus_mw", "float", FEATURE, non_negative=True, description="BE power from the alternate signoff engine (mW), for qualification"),
+    ColumnSpec("cg_efficiency", "float", FEATURE, non_negative=True, description="Clock-gating efficiency (fraction of register clock pins gated)"),
     # physical features
     ColumnSpec("wire_cap_pf", "float", FEATURE, non_negative=True, description="Total wire capacitance (pF)"),
     ColumnSpec("cell_cap_pf", "float", FEATURE, non_negative=True, description="Total cell/pin capacitance (pF)"),
@@ -67,6 +69,9 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("run_id", "str", PROVENANCE, description="EDA run identifier"),
     ColumnSpec("build_date", "str", PROVENANCE, description="Build date (YYYY-MM-DD)"),
     ColumnSpec("design_type", "str", PROVENANCE, description="cpu | gpu | asic | ai_accelerator | soc (from metadata.json)"),
+    ColumnSpec("milestone", "str", PROVENANCE, description="Design milestone of the build (rtl, synthesis, placement, route, signoff)"),
+    ColumnSpec("be_activity_mode", "str", PROVENANCE, description="Activity source of the BE power number: saif/fsdb (vector-based) or vectorless"),
+    ColumnSpec("power_domain", "str", PROVENANCE, description="UPF power domain the FUB belongs to"),
 )
 
 DERIVED_COLUMNS: tuple[str, ...] = (
@@ -122,6 +127,9 @@ LABELS: dict[str, str] = {
     "avg_net_length_um": "Avg Net Length",
     "bits_per_cycle": "Bits switched / cycle",
     "net_count": "Net Count",
+    "be_voltus_mw": "BE Power (Voltus)",
+    "cg_efficiency": "Clock-gating Efficiency",
+    "power_density": "Power Density",
     "clock_period_ps": "Clock Period",
     "wns_ps": "WNS",
     "tns_ps": "TNS",

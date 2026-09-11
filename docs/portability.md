@@ -54,3 +54,20 @@ force changes. Those changes should land in adapters and templates, never in the
 - New quality rules are one `CHECKS` entry plus one `mark()`.
 - The mock generator is the regression harness: extend it when a real format is added so the
   pipeline is always runnable without proprietary data.
+
+## Power-closure infrastructure (from an ASIC power / EDA-infrastructure role)
+
+An EDA-infrastructure power role adds responsibilities beyond correlation and prediction: power
+budgets tracked across milestones, power-intent verification, tool qualification, hotspot hunting,
+and continuous improvement across tape-outs. powermet covers each with one small piece:
+
+| Responsibility | powermet piece | Where |
+|---|---|---|
+| Establish power budgets, track metrics across milestones, communicate risk | `budget check`: budget per design / partition / FUB with a tolerance per milestone (`metadata.json.milestone`), ON TRACK / AT RISK / OVER, trend per build, FUB coverage so an undercounted scope is flagged INCOMPLETE, CV error band as the noise floor; history in the catalog | `budgets.py`, `templates/budgets.template.toml`, `catalog.budget_status` |
+| Power intent (UPF) verification, consistent application across stages, multi-voltage domains | `intent show`: UPF read per run, FUB -> power domain / supply, checks `no_power_domain`, `multiple_power_domains`, `domain_voltage_mismatch` vs operating points, `domain_state_missing`; `power_domain` on every dataset row; sanitize flags | `intent.py`, `templates/power_intent.template.upf` |
+| Evaluate and qualify EDA tools and methodologies; PrimePower, Voltus or equivalent | `qualify --a be_mw --b be_voltus_mw`: MAPE / P95 / bias / r against a tolerance with a PASS / FAIL verdict, per partition, worst disagreements; works for engine vs engine, version vs version, FE stage vs BE, vectorless vs vector-based | `qualify.py`, `extract/voltus.py` (optional source) |
+| Identify power hotspots and inefficiencies | `analyze hotspots`: share, power density (mW/um^2), growth vs previous build, clock-gating efficiency from PPRTL; flags `hotspot`, `regressed`, `low-cg`; partition rollup | `hotspots.py` |
+| Dynamic / static estimation, vectorless vs vector-based analysis | activity source recorded per report (`Activity:` header) and carried as `be_activity_mode`; vectorless BE numbers flagged lower-trust by sanitize | adapters, `sanitize.CHECKS["vectorless_power"]` |
+| Improve signoff accuracy and turnaround; systemic opportunities across tape-outs | per-stage runtime / memory profiles, metric trust across builds, build deltas and the power x timing frontier | `profiling.py`, `sanitize.metric_quality`, `deltas.py`, `frontier.py` |
+| Low-power techniques (clock gating, power gating, multi-Vdd, DVFS) | `cg_efficiency` per FUB, UPF domains and states, DVFS curve and operating-point maps in `explore` | `hotspots.py`, `intent.py`, `curves.py` |
+| Multiple concurrent projects, vendor tool evaluation | one catalog across designs with `design_type`; `powermet sources` lists tool families and versions each adapter was written against | `catalog.py`, `cli.cmd_sources` |

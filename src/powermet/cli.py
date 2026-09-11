@@ -840,6 +840,107 @@ def cmd_integrate_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+# ----------------------------------------------------------------------------- power closure infrastructure
+
+def cmd_budget_check(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from powermet.budgets import check_budgets, load_budgets, render_budgets, render_history
+    from powermet.catalog import record_budgets
+    from powermet.modeling import latest_model_metadata
+
+    from powermet.storage import load_dataset
+
+    project, cfg, _ = _load(args)
+    df = load_dataset(project, cfg, raw=True)          # budgets sum every measured FUB, flagged or not
+    candidates = [Path(args.file)] if args.file else [Path(cfg.budgets_file), project.root / "budgets.toml",
+                                                       *sorted(Path.cwd().glob("*/budgets.toml"))]
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
+        raise CliError("budgets file not found; pass --file or put budgets.toml in the working or project directory "
+                       "(see templates/budgets.template.toml)")
+    print(f"Budgets: {path}")
+    print()
+    budgets = load_budgets(path)
+    if args.design:
+        budgets = [b for b in budgets if b.design == args.design]
+    meta = latest_model_metadata(project)
+    iv = None
+    if meta and (meta.get("cv") or {}).get("intervals", {}).get(cfg.whatif_model):
+        i = meta["cv"]["intervals"][cfg.whatif_model]
+        iv = (i["p05"], i["p95"])
+    from powermet.storage import load_table
+
+    statuses = check_budgets(df, budgets, interval=iv, lineage=load_table(project, "lineage"))
+    print(render_budgets(statuses))
+    if args.history:
+        for s_ in statuses:
+            print()
+            print(render_history(s_))
+    record_budgets(project, statuses)
+    return 0 if not any(s_.status == "OVER" for s_ in statuses) or not args.strict else 1
+
+
+def cmd_analyze_hotspots(args: argparse.Namespace) -> int:
+    from powermet.hotspots import hotspots, render_hotspots
+    from powermet.textfmt import heading
+
+    project, cfg, df = _load(args)
+    designs = [args.design] if args.design else sorted(df["design"].astype(str).unique())
+    print(heading("Power hotspots and inefficiencies"))
+    print()
+    for d in designs:
+        try:
+            rep = hotspots(df, d, args.workload, args.operating_point, args.build)
+        except ValueError as exc:
+            raise CliError(str(exc))
+        print(render_hotspots(rep, top=args.top))
+        print()
+    return 0
+
+
+def cmd_qualify(args: argparse.Namespace) -> int:
+    from powermet.qualify import qualify, render_qualification
+
+    project, cfg, df = _load(args)
+    try:
+        q = qualify(df, args.a, args.b, args.tolerance if args.tolerance is not None else cfg.qualify_tolerance_pct,
+                    args.design, args.build, args.workload, args.operating_point, top=args.top)
+    except ValueError as exc:
+        raise CliError(str(exc))
+    print(render_qualification(q))
+    return 0 if q.verdict == "PASS" or not args.strict else 1
+
+
+def cmd_intent_show(args: argparse.Namespace) -> int:
+    from powermet.intent import render_intent_summary
+    from powermet.storage import load_table
+    from powermet.textfmt import table
+
+    project = _project(args)
+    t = load_table(project, "power_intent")
+    if not len(t):
+        raise CliError("no power_intent table; ingest run directories with intent/*.upf")
+    if args.design:
+        t = t[t["design"] == args.design]
+    print(render_intent_summary(t))
+    bad = t[~t["intent_ok"]]
+    if len(bad):
+        print()
+        print("FUBs with power-intent issues")
+        print()
+        print(table(["Design", "Build", "FUB", "Domain", "Issues", "Voltage mismatch"],
+                    [[r["design"], r["build"], r["fub"], r["power_domain"] if isinstance(r["power_domain"], str) else "-", r["intent_issues"], r["voltage_mismatch"]]
+                     for _, r in bad.head(args.limit).iterrows()], ["l"] * 6))
+        if len(bad) > args.limit:
+            print(f"... {len(bad) - args.limit} more")
+    if args.fub:
+        sel = t[t["fub"] == args.fub]
+        print()
+        print(sel[["design", "build", "fub", "power_domain", "supply_net", "domain_states", "intent_issues"]].to_string(index=False))
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -918,6 +1019,13 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--operating-point", default=None)
     a.add_argument("--top", type=int, default=5)
     a.set_defaults(func=cmd_analyze_deltas)
+    a = an_sub.add_parser("hotspots", help="Rank FUBs/partitions by power, density, growth vs previous build, clock-gating efficiency.")
+    a.add_argument("--design", default=None)
+    a.add_argument("--build", default=None)
+    a.add_argument("--workload", default=None)
+    a.add_argument("--operating-point", default=None)
+    a.add_argument("--top", type=int, default=10)
+    a.set_defaults(func=cmd_analyze_hotspots)
     a = an_sub.add_parser("frontier", help="Power x timing (Fmax) frontier across builds with Pareto classification.")
     a.add_argument("--design", default=None)
     a.add_argument("--workload", default=None)
@@ -1008,6 +1116,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("sources", help="List source adapters: tool family, versions, patterns, metrics.")
     sp.set_defaults(func=cmd_sources)
+
+    sp = sub.add_parser("budget", help="Power budgets tracked across design milestones.")
+    bg = sp.add_subparsers(dest="budget_command", metavar="<subcommand>")
+    bg.required = True
+    b1 = bg.add_parser("check", help="Latest build vs budget with milestone tolerance; ON TRACK / AT RISK / OVER.")
+    b1.add_argument("--file", default=None, help="budgets TOML (default: config budgets_file, e.g. budgets.toml)")
+    b1.add_argument("--design", default=None)
+    b1.add_argument("--history", action="store_true", help="Also print every build for each budget.")
+    b1.add_argument("--strict", action="store_true", help="Exit 1 when any budget is OVER.")
+    b1.set_defaults(func=cmd_budget_check)
+
+    sp = sub.add_parser("qualify", help="Compare two estimates of the same quantity (engine vs engine, version vs version).")
+    sp.add_argument("--a", required=True, help="reference column, e.g. be_mw")
+    sp.add_argument("--b", required=True, help="candidate column, e.g. be_voltus_mw or fe_physical_mw")
+    sp.add_argument("--tolerance", type=float, default=None, help="MAPE tolerance in %% (default from config)")
+    sp.add_argument("--design", default=None)
+    sp.add_argument("--build", default=None, help="Default: latest build per design.")
+    sp.add_argument("--workload", default=None)
+    sp.add_argument("--operating-point", default=None)
+    sp.add_argument("--top", type=int, default=8)
+    sp.add_argument("--strict", action="store_true", help="Exit 1 on FAIL.")
+    sp.set_defaults(func=cmd_qualify)
+
+    sp = sub.add_parser("intent", help="Power intent (UPF) coverage and consistency.")
+    ip = sp.add_subparsers(dest="intent_command", metavar="<subcommand>")
+    ip.required = True
+    i1 = ip.add_parser("show", help="Domains per build, FUBs without a domain, voltage mismatches.")
+    i1.add_argument("--design", default=None)
+    i1.add_argument("--fub", default=None)
+    i1.add_argument("--limit", type=int, default=20)
+    i1.set_defaults(func=cmd_intent_show)
 
     sp = sub.add_parser("measure", help="Measurement-level access with provenance (model root / FUB / build / stage / metric).")
     ms = sp.add_subparsers(dest="measure_command", metavar="<subcommand>")

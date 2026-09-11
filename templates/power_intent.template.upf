@@ -1,0 +1,10 @@
+# Minimal UPF the power-intent reader understands (structure only; other commands are ignored).
+upf_version 2.1
+create_supply_port VSS
+create_supply_net  VSS
+
+create_supply_port VDD_A
+create_supply_net  VDD_A
+create_power_domain PD_A -elements {top/part_partition_a}
+set_domain_supply_net PD_A -primary_power_net VDD_A -primary_ground_net VSS
+add_port_state VDD_A -state {nom 0.80} -state {turbo 0.88} -state {off off}

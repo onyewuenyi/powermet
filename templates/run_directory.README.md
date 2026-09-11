@@ -12,7 +12,10 @@ One directory per design × build, produced by the flows (or copied/linked from 
   starrc/parasitics_summary.rpt
   implementation/qor_summary.rpt
   activity/<wl>.saif                   <- output of the FSDB -> SAIF flow
-  perf/<wl>_<op>.csv
+  perf/<wl>_<op>.csv                   (optional)
+  voltus/<wl>_<op>/power_hier.rpt      (optional: second signoff engine, for `powermet qualify`)
+  intent/<design>.upf                  <- templates/power_intent.template.upf
+<root>/budgets.toml                    <- templates/budgets.template.toml
 ```
 
 If the target environment lays files out differently, do not move the files: set `source_patterns`
