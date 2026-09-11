@@ -146,6 +146,12 @@ class ModelRoot:
                 return list(self._by_partition[_norm(m.group("name"))])
         return []
 
+    def is_ancestor(self, obj: str) -> bool:
+        """True when `obj` is a hierarchy level above at least one mapped FUB (a partition or design
+        aggregate row in a BE report, or an RTL parent) - such rows are aggregates, not unmapped objects."""
+        prefix = obj.rstrip("/") + "/"
+        return any(f.be_hier.startswith(prefix) or f.fe_hier.startswith(prefix) for f in self.fubs)
+
     def resolve(self, obj: str, object_kind: str) -> list[FubSpec]:
         """Generic entry point used by lineage: returns the FUB(s) an object belongs to."""
         if object_kind == "fe_hier":

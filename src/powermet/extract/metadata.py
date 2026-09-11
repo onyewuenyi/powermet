@@ -1,7 +1,9 @@
 """Build metadata source: metadata.json in the run directory.
 
-Provides design/build identity, dates, tool versions, workloads, and operating-point
-voltage/frequency (as design-level records that apply to every FUB).
+Provides design/build identity, dates, tool versions, workloads, operating-point
+voltage/frequency (as design-level records that apply to every FUB), and the activity-flow
+provenance block (`activity_flow`: source FSDB, core, mapping data, partition list, tool,
+output hierarchy, simulation clock period) that the SAIF adapter needs.
 
 One file spans all operating points, so this adapter sets a per-record `operating_point`
 column on `records` instead of the report-level ParsedReport.operating_point (see base.py).
@@ -52,10 +54,18 @@ def inputs_from_metadata(run_dir: Path, patterns: dict[str, str] | None = None) 
     if not path.exists():
         raise FileNotFoundError(f"no metadata.json in {run_dir}")
     meta = load(path)
+    ops = meta.get("operating_points") or {}
+    flow = dict(meta.get("activity_flow") or {})
+    sim_period = flow.get("sim_clock_period_ps")
+    if not sim_period:
+        nom = ops.get("nom") or (next(iter(ops.values())) if ops else {})
+        if nom.get("frequency_ghz"):
+            sim_period = 1000.0 / float(nom["frequency_ghz"])
     inputs = SourceInputs(
         design=str(meta["design"]), build=str(meta["build"]), run_dir=Path(run_dir),
         workloads=list(meta.get("workloads") or []),
-        operating_points=list((meta.get("operating_points") or {}).keys()),
+        operating_points=list(ops.keys()),
         patterns=dict(patterns or {}),
+        context={"sim_clock_period_ps": sim_period, "activity_hierarchy": flow.get("hierarchy", "be"), "activity_flow": flow},
     )
     return inputs, meta

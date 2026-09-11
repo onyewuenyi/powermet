@@ -47,7 +47,7 @@ CANONICAL_UNITS = {
     "area": "um2", "cell_count": "count", "fanout": "count",
     "frequency_ghz": "GHz", "voltage_v": "V", "activity": "ratio",
     "ipc": "ops/cycle", "throughput_gops": "Gops/s",
-    "wire_length_um": "um", "avg_net_length_um": "um", "bits_per_cycle": "bits",
+    "wire_length_um": "um", "avg_net_length_um": "um", "bits_per_cycle": "bits", "net_count": "count",
     "clock_period_ps": "ps", "wns_ps": "ps", "tns_ps": "ps", "violating_endpoints": "count",
 }
 
@@ -104,6 +104,7 @@ class SourceInputs:
     workloads: list[str] = field(default_factory=list)
     operating_points: list[str] = field(default_factory=list)
     patterns: dict[str, str] = field(default_factory=dict)   # source -> pattern override
+    context: dict = field(default_factory=dict)              # extra parse context from metadata (e.g. sim clock period)
 
     def pattern_for(self, source: str, default: str) -> str:
         return self.patterns.get(source, default)
@@ -158,7 +159,7 @@ def locate(inputs: SourceInputs, source: str, default_pattern: str) -> list[Loca
     need_op = "{operating_point}" in pattern
     for wl in (wls if need_wl else [None]):
         for op in (ops if need_op else [None]):
-            ctx = {}
+            ctx = dict(inputs.context)
             if need_wl:
                 ctx["workload"] = wl
             if need_op:

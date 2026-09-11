@@ -47,21 +47,29 @@ def load_fub_map(path: str | Path) -> pd.DataFrame:
 def resolve_objects(records: pd.DataFrame, model: ModelRoot) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Attach `fub` to each record via the model root. Partition records fan out to member FUBs.
 
-    Returns (mapped, unmapped). Design-level records get fub = DESIGN_FUB.
+    Returns (mapped, unmapped). Design-level records get fub = DESIGN_FUB. Hierarchy rows that sit
+    above mapped FUBs (partition / design aggregates in a BE report) are neither: they are dropped
+    as aggregates so they do not show up as unmapped objects.
     """
     rec = records.copy()
     fubs: list[list[str]] = []
+    aggregate: list[bool] = []
     for obj, kind in zip(rec["object"].astype(str), rec["object_kind"].astype(str)):
+        agg = False
         if kind == DESIGN:
-            fubs.append([DESIGN_FUB])
+            hit = [DESIGN_FUB]
         elif kind in (FE_HIER, BE_HIER, PARTITION):
-            fubs.append([f.fub for f in model.resolve(obj, kind)])
+            hit = [f.fub for f in model.resolve(obj, kind)]
+            agg = not hit and kind in (FE_HIER, BE_HIER) and model.is_ancestor(obj)
         else:
-            fubs.append([])
+            hit = []
+        fubs.append(hit)
+        aggregate.append(agg)
     rec["fub"] = fubs
+    rec["_aggregate"] = aggregate
     n = rec["fub"].str.len()
-    unmapped = rec[n == 0].drop(columns=["fub"]).assign(fub=None)
-    mapped = rec[n > 0].explode("fub").reset_index(drop=True)
+    unmapped = rec[(n == 0) & ~rec["_aggregate"]].drop(columns=["fub", "_aggregate"]).assign(fub=None)
+    mapped = rec[n > 0].drop(columns=["_aggregate"]).explode("fub").reset_index(drop=True)
     return mapped, unmapped
 
 

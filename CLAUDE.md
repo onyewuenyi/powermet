@@ -2,7 +2,7 @@
 
 Power Metrology & Modeling: a local Python CLI that bridges physical implementation data and
 architectural power decisions. It ingests EDA reports (PPRTL, PrimePower, PrimeTime, StarRC, Fusion
-Compiler, activity, performance) per design/build run directory, keys everything on the model root
+Compiler, SAIF activity from the FSDB → SAIF flow, performance) per design/build run directory, keys everything on the model root
 (canonical FUB identity, FUB → partition), sanitizes each metric, correlates FE to BE power, fits
 build-validated power/energy models (including a compact data-movement model), and answers what-if
 questions with timing feasibility and workload traces.
@@ -23,7 +23,7 @@ questions with timing feasibility and workload traces.
 - Keep abstractions single-sourced: object names resolve only in `ModelRoot`; dataset slicing only via `DatasetSlice`; metric lists derive from `schema.py` / `extract/__init__.py`; new model kinds are a `ModelSpec`; new quality checks are a `CHECKS` entry plus one `mark()`.
 - Rows are never split at random; hold out whole builds. Report associations, never causes. Round output sensibly.
 - Mock data (`powermet mock generate`) is a fixture with injected defects; when real report samples arrive, change `parse()`/`get_files()` in the matching adapter and extend `mockdata.py` to match.
-- Adapter formats are representative, not vendor-exact. `stage` is always `FE_BE`. Timing is a partition attribute inherited by FUBs.
+- Adapter formats are representative, not vendor-exact (SAIF follows the real SAIF 2.0 grammar). `stage` is always `FE_BE`. Timing is a partition attribute inherited by FUBs. BE hierarchy paths go through the partition (`top/part_<p>/u_<fub>`); activity comes from the physical-hierarchy SAIF written by the Verdi FSDB → SAIF flow, with the flow inputs recorded in `metadata.json` → `activity_flow`.
 
 ## Quick demo
 

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from powermet.extract import SOURCES, SOURCE_METRICS, METRIC_SCOPE, metrics_with_scope
-from powermet.extract import activity, implementation, metadata, pprtl, primepower, primetime, starrc
+from powermet.extract import implementation, metadata, pprtl, primepower, primetime, saif, starrc
 from powermet.extract.base import (BE_HIER, FE_HIER, OBJECT_KINDS, PARTITION, Located, ParseError, SourceInputs, convert_unit,
                                    find_table_start, locate, parse_header, record, to_float, tool_name, units_from_text)
 
@@ -195,20 +195,58 @@ def test_pprtl_mode_aliases_and_errors(tmp_path):
         pprtl.parse(_write(tmp_path, "p3.rpt", PPRTL.replace("Mode: logical", "Mode: bogus")))
 
 
-ACTIVITY = """Activity Summary
-Tool: saif_summary  Version: 1.2
-Workload: memory
-Hierarchy                     AvgToggleRate    NetCount    BitsPerCycle
-top/u_a                       0.2134           18234       63.8
-top/u_b                       0.1000           1000
+SAIF = """(SAIFILE
+(SAIFVERSION "2.0") (DIRECTION "backward") (DESIGN "top") (DATE "2026-03-02")
+(VENDOR "Synopsys") (PROGRAM_NAME "Verdi") (VERSION "V-2024.09")
+(DIVIDER / ) (TIMESCALE 1 ns) (DURATION 4000)
+(INSTANCE top
+  (PORT (clk (T0 2000000) (T1 2000000) (TC 20000)))
+  (INSTANCE part_p0
+    (INSTANCE u_a
+      (NET
+        (d\\[0\\] (T0 1000) (T1 3000) (TX 0) (TC 2000) (IG 0))
+        (d\\[1\\] (T0 1000) (T1 3000) (TX 0) (TC 4000) (IG 0))
+      )
+      (INSTANCE u_a_sub (NET (x (T0 1) (T1 1) (TC 1000))))
+    )
+    (INSTANCE u_empty)
+  )
+))
 """
 
 
-def test_activity_optional_bits(tmp_path):
-    rep = activity.parse(_write(tmp_path, "a.rpt", ACTIVITY))
-    got = rep.records.groupby("object")["metric"].apply(set).to_dict()
-    assert got == {"top/u_a": {"activity", "bits_per_cycle"}, "top/u_b": {"activity"}}
-    assert rep.workload == "memory"
+def test_saif_parser_aggregates_per_instance(tmp_path):
+    p = _write(tmp_path, "typical.saif", SAIF)
+    rep = saif.parse(p, workload="typical", sim_clock_period_ps=400.0)      # 4000 ns / 400 ps = 10,000 cycles
+    r = rep.records.pivot(index="object", columns="metric", values="value")
+    assert r.loc["top/part_p0/u_a", "net_count"] == 3                            # own nets + descendant
+    assert r.loc["top/part_p0/u_a", "bits_per_cycle"] == pytest.approx(0.7)      # (2000+4000+1000)/10000
+    assert r.loc["top/part_p0/u_a", "activity"] == pytest.approx(0.7 / 3)
+    assert r.loc["top/part_p0/u_a/u_a_sub", "activity"] == pytest.approx(0.1)
+    assert r.loc["top/part_p0", "net_count"] == 3 and "top" not in r.index and "top/part_p0/u_empty" not in r.index
+    assert (rep.records["object_kind"] == BE_HIER).all() and rep.tool == "Verdi" and rep.workload == "typical"
+    fe = saif.parse(p, activity_hierarchy="fe", sim_clock_period_ps=400.0)
+    assert (fe.records["object_kind"] == FE_HIER).all()
+    with pytest.raises(ParseError, match="clock period"):
+        saif.parse(p)
+    with pytest.raises(ParseError, match="DURATION"):
+        saif.parse(_write(tmp_path, "d.saif", SAIF.replace("(DURATION 4000)", "(DURATION 0)")), sim_clock_period_ps=400.0)
+
+
+def test_saif_context_from_metadata(tmp_path):
+    import json
+    (tmp_path / "activity").mkdir()
+    _write(tmp_path / "activity", "gemm.saif", SAIF)
+    _write(tmp_path, "metadata.json", json.dumps({
+        "design": "D", "build": "B1", "workloads": ["gemm"], "operating_points": {"nom": {"frequency_ghz": 2.5, "voltage_v": 0.8}},
+        "activity_flow": {"tool": "Verdi", "hierarchy": "be", "source_fsdb": {"gemm": "/sim/gemm.fsdb"}, "core": "top",
+                          "mapping": "mapping/fub_map.csv", "partition_list": ["P0"]}}))
+    inputs, meta = metadata.inputs_from_metadata(tmp_path)
+    assert inputs.context["sim_clock_period_ps"] == pytest.approx(400.0)      # from the nominal operating point
+    files = saif.get_files(inputs)
+    assert files and files[0].context["workload"] == "gemm" and files[0].context["activity_flow"]["core"] == "top"
+    rep = saif.parse(files[0].path, **files[0].context)
+    assert any("flow inputs" in n and "/sim/gemm.fsdb" in n for n in rep.notes)
 
 
 def test_metadata_without_operating_points_and_missing_file(tmp_path):

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from powermet.extract import activity, implementation, metadata, perf, pprtl, primepower, primetime, starrc
+from powermet.extract import implementation, metadata, perf, pprtl, primepower, primetime, saif, starrc
 
-SOURCES = {m.SOURCE: m for m in (metadata, pprtl, primepower, primetime, starrc, implementation, activity, perf)}
+SOURCES = {m.SOURCE: m for m in (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf)}
 
 # metrics each source is expected to deliver (used by lineage/sanitize to report gaps)
 SOURCE_METRICS = {
@@ -12,7 +12,7 @@ SOURCE_METRICS = {
     "primepower": ("be_mw",),
     "starrc": ("wire_cap_pf", "cell_cap_pf"),
     "implementation": ("area", "cell_count", "fanout", "wire_length_um", "avg_net_length_um"),
-    "activity": ("activity", "bits_per_cycle"),
+    "saif": ("activity", "bits_per_cycle", "net_count"),
     "primetime": ("clock_period_ps", "wns_ps", "tns_ps", "violating_endpoints"),
     "metadata": ("frequency_ghz", "voltage_v"),
     "perf": ("ipc", "throughput_gops"),
@@ -25,6 +25,7 @@ METRIC_SCOPE = {
     "be_mw": ("workload", "operating_point"),
     "activity": ("workload",),
     "bits_per_cycle": ("workload",),
+    "net_count": (),
     "wire_length_um": (), "avg_net_length_um": (),
     "clock_period_ps": ("operating_point",), "wns_ps": ("operating_point",), "tns_ps": ("operating_point",),
     "violating_endpoints": ("operating_point",),

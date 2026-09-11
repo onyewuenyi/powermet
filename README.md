@@ -70,10 +70,18 @@ The V0 flat-file path still works: `powermet demo generate`, `powermet data vali
   primetime/<op>/timing_summary.rpt       period, WNS, TNS, violating endpoints per PARTITION (inherited by its FUBs)
   starrc/parasitics_summary.rpt           wire cap / pin cap per BE hierarchy
   implementation/qor_summary.rpt          area, cell count, fanout, wire length, avg net length per BE hierarchy
-  activity/<wl>.activity.rpt              toggle activity and bits/cycle per FE hierarchy per workload
+  activity/<wl>.saif                      SAIF in the physical hierarchy from the FSDB -> SAIF flow (activity, bits switched/cycle)
   perf/<wl>_<op>.csv                      design-level ipc / throughput
 <root>/traces/<design>_phases.csv         workload phase trace for `integrate trace`
 ```
+
+**Activity.** The source of truth for switching activity is the RTL simulation FSDB per workload
+(logical hierarchy). The existing FSDB → SAIF flow (Verdi) takes the workload FSDB, the core, the FE/BE
+mapping data and the partition list, and writes a SAIF in the back-end physical hierarchy; that same SAIF
+drives SAIF-based power optimization in early Fusion Compiler. powermet reads that SAIF directly: per
+instance, `activity` = mean toggles per cycle per net, `bits_per_cycle` = total toggles per cycle, with the
+simulation clock period and the flow's inputs (FSDB path, core, mapping, partition list) recorded in
+`metadata.json` under `activity_flow` and carried as provenance.
 
 **Identity.** The model root is the source of truth: `ModelRoot` (`identity.py`) loads the FUB list with
 `model_root` (e.g. `GPU_A.PCORE0.Scheduler`), partition and FE/BE hierarchy from `mapping/fub_map.csv`,

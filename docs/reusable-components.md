@@ -6,7 +6,7 @@ lists the powermet modules it imports; anything not listed is standalone apart f
 | Component | Module | What it gives you | Depends on | Tests |
 |---|---|---|---|---|
 | **Source adapter contract** | `extract/base.py` | `SourceInputs`, `Located`, `ParsedReport`, `record()`, `convert_unit()` with the canonical-unit table, `locate()` with `{workload}`/`{operating_point}` patterns and per-source overrides, `parse_header()` / `find_table_start()` / `to_float()` text helpers, `OBJECT_KINDS`, `tool_name()` policy | – | `test_extract_units.py` (base helpers, locate overrides, record/kind validation) |
-| Adapters | `extract/{pprtl,primepower,primetime,starrc,implementation,activity,perf,metadata}.py` | One `get_files()` + `parse()` per tool; representative formats, unit normalisation, header-driven run id / build / scenario | `extract/base.py` | `test_extract_units.py` (literal report strings per adapter, unit variants, error paths); `test_extract_pipeline.py` (mock round-trip) |
+| Adapters | `extract/{pprtl,primepower,primetime,starrc,implementation,saif,perf,metadata}.py` | One `get_files()` + `parse()` per tool; representative formats, a real SAIF 2.0 parser (per-instance activity, bits switched/cycle), unit normalisation, header-driven run id / build / scenario | `extract/base.py` | `test_extract_units.py` (literal report strings per adapter, unit variants, error paths); `test_extract_pipeline.py` (mock round-trip) |
 | Metric registry | `extract/__init__.py` | `SOURCES`, `SOURCE_METRICS`, `METRIC_SCOPE` (which keys a metric varies by), `metrics_with_scope()` | adapters | `test_extract_units.py::test_registry_consistency` |
 | **Design identity** | `identity.py` | `ModelRoot` / `FubSpec`: FUB list, `model_root`, FUB → partition, FE/BE hierarchy, `resolve(obj, kind)`; the only place object names are matched | – | `test_identity_selection.py::TestModelRoot` |
 | Lineage | `lineage.py` | `resolve_objects()` (records → FUB incl. partition fan-out), `lineage_table()` with issue codes, `render_chain()` | `identity`, `extract/base` | `test_pipeline_units.py`, `test_timing_energy.py::test_primetime_parser_and_partition_fanout` |
@@ -52,7 +52,7 @@ lists the powermet modules it imports; anything not listed is standalone apart f
 
 ## Known limitations to keep in mind when lifting
 
-- Adapter formats are representative, not vendor-exact; `parse()` is the function to rewrite.
+- Adapter formats are representative, not vendor-exact, except SAIF which follows the SAIF 2.0 grammar; `parse()` is the function to rewrite.
 - `PARTITION_OBJECT_PATTERNS` in `identity.py` encodes how partition objects are named in reports.
 - `stage` in the wide schema is always `FE_BE`; it is reserved for other pairings.
 - `TimingModel` fits per partition from the latest build and only borrows earlier builds for the

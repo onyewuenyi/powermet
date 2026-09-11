@@ -11,7 +11,7 @@ Layout (one run directory per design x build):
         primetime/<op>/timing_summary.rpt          (partition-level timing)
         starrc/parasitics_summary.rpt
         implementation/qor_summary.rpt
-        activity/<workload>.activity.rpt
+        activity/<workload>.saif                 (SAIF in the physical hierarchy, as written by the FSDB -> SAIF flow)
         perf/<workload>_<op>.csv
     <root>/traces/<design>_phases.csv           (workload phase trace for performance-tool integration)
 
@@ -97,12 +97,20 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
             r = perf[(perf.design == design) & (perf.build == build) & (perf.operating_point == op)].iloc[0]
             op_table[op] = {"voltage_v": float(r["voltage_v"]), "frequency_ghz": float(r["frequency_ghz"])}
         status = "superseded" if stale_build == (design, build) else "current"
+        nom_op = op_table.get("nom") or next(iter(op_table.values()))
+        sim_period_ps = round(1000.0 / nom_op["frequency_ghz"], 1)
         json.dump({
             "schema_version": "1", "design": design, "build": build, "build_date": m["build_date"],
             "run_id": run_id, "status": status,
             "tools": {"pprtl": m["pprtl_version"], "primepower": m["primepower_version"],
-                      "starrc": m["starrc_version"], "fusion": m["fusion_version"]},
+                      "starrc": m["starrc_version"], "fusion": m["fusion_version"], "verdi": "V-2024.09"},
             "workloads": wls, "operating_points": op_table,
+            "activity_flow": {
+                "tool": "Verdi", "hierarchy": "be", "sim_clock_period_ps": sim_period_ps,
+                "source_fsdb": {wl: f"/sim/{design.lower()}/{build.lower()}/{wl}/rtl.fsdb" for wl in wls},
+                "core": design.lower() + "_top", "mapping": "mapping/fub_map.csv",
+                "partition_list": sorted(h["partition"].unique()),
+            },
         }, open(run_dir / "metadata.json", "w"), indent=2)
         if status == "superseded":
             log.append(f"{design}/{build}: metadata status=superseded (stale build)")
@@ -116,11 +124,12 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
             name = h.loc[fub, "be_hier"]
             return name + "_r2" if fub in renamed_unmapped else name
 
-        # ---- primepower per workload x op
+        # ---- primepower per workload x op (physical hierarchy: top -> partition -> block)
         pp_unit = "mW" if design == d_units_pp else "W"
+        parts = sorted(h["partition"].unique())
         for wl in wls:
             for op in ops:
-                sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)]
+                sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)].set_index("fub")
                 out = run_dir / "primepower" / f"{wl}_{op}"
                 out.mkdir(parents=True, exist_ok=True)
                 top = design.lower() + "_top"
@@ -132,19 +141,25 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                          f"{'':40}{'Int':>11}{'Switch':>11}{'Leak':>11}{'Total':>11}{'%':>7}",
                          f"{'Hierarchy':40}{'Power':>11}{'Power':>11}{'Power':>11}{'Power':>11}",
                          "-" * 91]
-                lines.append(f"{top:40}{total*0.45*scale:11.4e}{total*0.45*scale:11.4e}{total*0.10*scale:11.4e}{total*scale:11.4e}{100.0:7.1f}")
-                for _, r in sub.iterrows():
-                    fub = r["fub"]
-                    leaf = be_name(fub).split("/")[-1]
-                    v = r["be_mw"]
-                    if zero_pp == fub:
-                        v = 0.0004
-                    v *= scale
-                    ref = h.loc[fub, "synth_object"]
-                    row = f"  {leaf + ' (' + ref + ')':38}{v*0.45:11.4e}{v*0.45:11.4e}{v*0.10:11.4e}{v:11.4e}{(r['be_mw']/total*100):7.1f}"
-                    lines.append(row)
-                    if dup_pp == fub:
+
+                def prow(indent, label, v, pct):
+                    return f"{' ' * indent}{label:{40 - indent}}{v*0.45:11.4e}{v*0.45:11.4e}{v*0.10:11.4e}{v:11.4e}{pct:7.1f}"
+
+                lines.append(prow(0, top, total * scale, 100.0))
+                for part in parts:
+                    members = [f for f in h[h["partition"] == part].index if f in sub.index]
+                    ptotal = float(sub.loc[members, "be_mw"].sum())
+                    lines.append(prow(2, f"part_{part.lower()} (PART_{part})", ptotal * scale, ptotal / total * 100))
+                    for fub in members:
+                        r = sub.loc[fub]
+                        leaf = be_name(fub).split("/")[-1]
+                        v = r["be_mw"]
+                        if zero_pp == fub:
+                            v = 0.0004
+                        row = prow(4, f"{leaf} ({h.loc[fub, 'synth_object']})", v * scale, r["be_mw"] / total * 100)
                         lines.append(row)
+                        if dup_pp == fub:
+                            lines.append(row)
                 (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
         if pp_unit != "W":
             log.append(f"{design}/{build}: PrimePower reported in mW (unit variant)")
@@ -238,15 +253,37 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                          f"{r['wire_length_um']:14.1f}{r['avg_net_length_um']:12.3f}")
         (run_dir / "implementation" / "qor_summary.rpt").write_text("\n".join(lines) + "\n")
 
-        # ---- activity per workload (op-independent)
+        # ---- SAIF per workload (physical hierarchy, op-independent): output of the FSDB -> SAIF flow
         (run_dir / "activity").mkdir(exist_ok=True)
+        duration_ps = int(sim_period_ps * 20000)          # 20k simulated cycles
+        cycles = duration_ps / sim_period_ps
+        parts = sorted(h["partition"].unique())
         for wl in wls:
-            sub = mrows[(mrows.workload == wl) & (mrows.operating_point == ops[0])]
-            lines = ["Activity Summary", "Tool: saif_summary  Version: 1.2", f"Workload: {wl}",
-                     f"{'Hierarchy':44}{'AvgToggleRate':>15}{'NetCount':>10}{'BitsPerCycle':>14}"]
-            for _, r in sub.iterrows():
-                lines.append(f"{h.loc[r['fub'], 'fe_hier']:44}{r['activity']:15.4f}{int(r['cell_count'] * 0.36):10d}{r['bits_per_cycle']:14.3f}")
-            (run_dir / "activity" / f"{wl}.activity.rpt").write_text("\n".join(lines) + "\n")
+            sub = mrows[(mrows.workload == wl) & (mrows.operating_point == ops[0])].set_index("fub")
+            lines = ["(SAIFILE", '(SAIFVERSION "2.0")', '(DIRECTION "backward")', f'(DESIGN "{top}")',
+                     f'(DATE "{m["build_date"]}")', '(VENDOR "Synopsys")', '(PROGRAM_NAME "Verdi")', '(VERSION "V-2024.09")',
+                     "(DIVIDER / )", "(TIMESCALE 1 ps)", f"(DURATION {duration_ps})", f"(INSTANCE {top}"]
+            for part in parts:
+                lines.append(f"  (INSTANCE part_{part.lower()}")
+                for fub in h[h["partition"] == part].index:
+                    if fub not in sub.index:
+                        continue
+                    r = sub.loc[fub]
+                    leaf = be_name(fub).split("/")[-1]
+                    n_nets = int(round(r["bits_per_cycle"] / max(r["activity"], 1e-6)))
+                    n_nets = max(1, n_nets)
+                    tc = int(round(r["activity"] * cycles))
+                    lines.append(f"    (INSTANCE {leaf}")
+                    lines.append("      (NET")
+                    for k in range(n_nets):
+                        jitter = int(rng.integers(-tc // 10 - 1, tc // 10 + 2)) if tc > 10 else 0
+                        t1 = int(duration_ps * rng.uniform(0.3, 0.7))
+                        lines.append(f"        (d\\[{k}\\] (T0 {duration_ps - t1}) (T1 {t1}) (TX 0) (TC {max(tc + jitter, 0)}) (IG 0))")
+                    lines.append("      )")
+                    lines.append("    )")
+                lines.append("  )")
+            lines.append("))")
+            (run_dir / "activity" / f"{wl}.saif").write_text("\n".join(lines) + "\n")
 
         # ---- perf per workload x op
         (run_dir / "perf").mkdir(exist_ok=True)

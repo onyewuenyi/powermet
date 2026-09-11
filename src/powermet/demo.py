@@ -116,7 +116,7 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
         net_count = cell_count * 0.36
         avg_net_len = 12.0 * np.sqrt(area / 1000.0) * (0.8 + 0.08 * (fanout - 5.0)) * rng.lognormal(0, 0.2, size=n_fubs)
         wire_length = avg_net_len * net_count
-        bus_width = rng.choice([32, 64, 128, 256, 512], size=n_fubs).astype(float)
+        bus_width = rng.choice([8, 16, 32, 64], size=n_fubs).astype(float)   # nets carrying data traffic (written to SAIF)
         # partitions: contiguous groups of FUBs; timing is a partition attribute
         n_parts = max(1, min(len(PARTITION_NAMES), n_fubs // 6))
         part_of = [PARTITION_NAMES[(i * n_parts) // n_fubs] for i in range(n_fubs)]
@@ -139,12 +139,12 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
                 "partition": part_of[i],
                 "fe_hier": f"{top}/u_{names[i].lower()}",
                 "synth_object": f"{names[i]}_{rng.integers(0, 3)}" if rng.random() < 0.3 else names[i],
-                "be_hier": f"{top}/u_{names[i].lower()}" + ("_phys" if renamed else ""),
+                "be_hier": f"{top}/part_{part_of[i].lower()}/u_{names[i].lower()}" + ("_phys" if renamed else ""),
                 "n_instances": int(cell_count[i]),
             })
 
         k_dyn = 9.0
-        k_move = 0.015     # data-movement energy: bits x distance x V^2 x f; FE estimates capture only part of it
+        k_move = 0.11      # data-movement energy: bits x distance x V^2 x f; FE estimates capture only part of it
         leak_per_area = 0.012
         for b in range(spec.n_builds):
             build = f"B{b + 1:03d}"

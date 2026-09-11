@@ -17,7 +17,7 @@ from typing import Iterator
 import pandas as pd
 
 STAGE_OF_SOURCE = {
-    "pprtl": "FE", "activity": "FE",
+    "pprtl": "FE", "saif": "ACTIVITY",
     "primepower": "BE", "primetime": "TIMING", "starrc": "PHYS", "implementation": "PHYS",
     "metadata": "DESIGN", "perf": "PERF",
 }

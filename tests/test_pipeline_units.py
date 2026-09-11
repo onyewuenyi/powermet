@@ -25,7 +25,7 @@ def _records():
         ("top/u_a", "be_hier", "wire_cap_pf", 3.0, None, None),
         ("top/u_a", "be_hier", "cell_cap_pf", 1.0, None, None),
         ("top/u_a", "be_hier", "area", 5.0, None, None),
-        ("top/u_a", "fe_hier", "activity", 0.4, "typical", None),
+        ("top/u_a", "be_hier", "activity", 0.4, "typical", None),
         ("top/part_p0", "partition", "wns_ps", -5.0, None, "nom"),
         ("top/part_p0", "partition", "clock_period_ps", 400.0, None, "nom"),
         ("*", "design", "frequency_ghz", 2.5, None, "nom"),
@@ -35,6 +35,7 @@ def _records():
     ]
     df = pd.DataFrame(rows, columns=["object", "object_kind", "metric", "value", "workload", "operating_point"])
     df["source"] = df["object_kind"].map({"fe_hier": "pprtl", "be_hier": "primepower", "partition": "primetime", "design": "metadata"})
+    df.loc[df["metric"] == "activity", "source"] = "saif"
     df["unit"] = "x"
     return df
 
@@ -57,7 +58,7 @@ def test_lineage_table_issue_codes():
     mapped, _ = resolve_objects(_records(), _model())
     table, flags = lineage_table(mapped, _model(), "D", "B1", has_timing_source=True)
     t = table.set_index("fub")
-    assert t.loc["A", "lineage_ok"] and t.loc["A", "sources"].startswith("activity:pprtl")
+    assert t.loc["A", "lineage_ok"] and t.loc["A", "sources"].startswith("activity:saif")
     assert BE_NOT_IN_REPORTS in t.loc["B", "lineage_issues"] and TIMING_MISSING in t.loc["B", "lineage_issues"]
     txt = render_chain(t.reset_index().iloc[1])
     assert "LINEAGE ISSUES" in txt and "MODEL ROOT          D.P1.B" in txt
@@ -168,3 +169,15 @@ def test_stale_signoff_report_is_excluded(tmp_path):
     assert res.wide["wire_cap_pf"].isna().all()
     res2 = extract_run(run, Config(strict_consistency=False))
     assert any(r.source == "starrc" for r in res2.reports) and res2.errors
+
+
+def test_aggregate_rows_are_not_unmapped():
+    rec = pd.DataFrame([
+        {"object": "top", "object_kind": "be_hier", "metric": "be_mw", "value": 100.0},
+        {"object": "top/part_p0", "object_kind": "be_hier", "metric": "be_mw", "value": 50.0},
+        {"object": "top/u_zz", "object_kind": "be_hier", "metric": "be_mw", "value": 1.0},
+    ])
+    model = ModelRoot.from_frame(pd.DataFrame([{"fub": "A", "partition": "P0", "fe_hier": "top/u_a", "synth_object": "A",
+                                                "be_hier": "top/part_p0/u_a"}]), "D")
+    mapped, unmapped = resolve_objects(rec, model)
+    assert len(mapped) == 0 and unmapped["object"].tolist() == ["top/u_zz"]

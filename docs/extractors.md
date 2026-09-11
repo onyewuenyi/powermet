@@ -12,8 +12,9 @@ Every EDA source is a module in `src/powermet/extract/` that follows one contrac
 | `parse(path, **context) -> ParsedReport` | **what** the file looks like. Returns long records `(object, object_kind, metric, value, unit, unit_original)` plus tool, version, run_id, date. |
 
 `SourceInputs` is the common input every locator receives: `design`, `build`, `run_dir`,
-`workloads`, `operating_points`, and `patterns` (per-source overrides read from
-`.powermet/config.toml` → `source_patterns`).
+`workloads`, `operating_points`, `patterns` (per-source overrides read from
+`.powermet/config.toml` → `source_patterns`) and `context` (extra values from `metadata.json`
+that `locate()` passes to every `parse()` call, e.g. the simulation clock period for SAIF).
 
 Adapter conventions (enforced by `tests/test_extract_units.py`): build records with `base.record()`,
 convert with `convert_unit()` and keep `unit_original`, fill `tool` via `tool_name(hdr, default)`,
@@ -40,7 +41,8 @@ These are representative, not vendor-exact. Each parser is written the way a rea
 unit normalization), so replacing them with vendor-exact parsing is a local change.
 
 - `metadata.json`: `design`, `build`, `build_date`, `run_id`, `status` (`current`/`superseded`), `tools{}`,
-  `workloads[]`, `operating_points{name: {voltage_v, frequency_ghz}}`.
+  `workloads[]`, `operating_points{name: {voltage_v, frequency_ghz}}`, `activity_flow{tool, hierarchy,
+  sim_clock_period_ps, source_fsdb{workload: path}, core, mapping, partition_list[]}`.
 - `mapping/fub_map.csv`: `fub, model_root, partition, fe_hier, synth_object, be_hier` (`model_root` and
   `partition` optional; without them identity falls back to `fub` and timing cannot be attached).
 - PrimeTime: `Time units: ps|ns`; `Scenario: <op>`; `Partition Clock Period WNS TNS Violating Endpoints` rows keyed
@@ -52,7 +54,12 @@ unit normalization), so replacing them with vendor-exact parsing is a local chan
 - StarRC: `Capacitance units: pF|fF`; `Instance Nets TotalCap WireCap PinCap` → `wire_cap_pf`, `cell_cap_pf`.
 - Implementation: `Area units: um^2`; `Hierarchy CellArea CellCount AvgFanout Utilization [WireLength AvgNetLen]` →
   `area`, `cell_count`, `fanout`, optional `wire_length_um`, `avg_net_length_um` (data-movement distance proxy).
-- Activity: `Hierarchy AvgToggleRate NetCount [BitsPerCycle]` → `activity`, optional `bits_per_cycle` (per workload).
+- SAIF (`activity/<workload>.saif`): SAIF 2.0 as written by the FSDB → SAIF flow (Verdi) in the physical
+  hierarchy. Per instance (own nets + descendants): `activity` = mean TC / cycles, `bits_per_cycle` = sum TC / cycles,
+  `net_count`; cycles = DURATION × TIMESCALE / `sim_clock_period_ps`. The clock period and the flow inputs
+  (source FSDB per workload, core, mapping data, partition list, output hierarchy) come from `metadata.json`
+  → `activity_flow` and reach `parse()` through `SourceInputs.context`. Set `activity_flow.hierarchy = "fe"`
+  for an RTL-hierarchy SAIF. Aggregate rows above mapped FUBs (partition, top) are ignored, not "unmapped".
 - Perf: CSV `metric,value,unit` with `ipc`, `throughput_gops` (per workload × operating point).
 
 ## Metric scope

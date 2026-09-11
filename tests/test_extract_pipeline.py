@@ -78,9 +78,13 @@ def test_pipeline_roundtrip_clean(tmp_path, clean_root):
     df = load_dataset(proj)
     assert len(df) == len(data.measurements)
     m = data.measurements.merge(df, on=["design", "build", "fub", "workload", "operating_point"], suffixes=("_gen", ""))
-    for col in ("be_mw", "fe_logical_mw", "fe_physical_mw", "wire_cap_pf", "cell_cap_pf", "area", "activity", "frequency_ghz", "voltage_v",
-                "wns_ps", "clock_period_ps", "bits_per_cycle", "avg_net_length_um"):
+    for col in ("be_mw", "fe_logical_mw", "fe_physical_mw", "wire_cap_pf", "cell_cap_pf", "area", "frequency_ghz", "voltage_v",
+                "wns_ps", "clock_period_ps", "avg_net_length_um"):
         assert np.allclose(m[col + "_gen"], m[col], rtol=5e-3), col
+    # SAIF is written with per-net toggle jitter, so activity aggregates are close, not exact
+    assert np.allclose(m["activity_gen"], m["activity"], rtol=0.06)
+    assert np.allclose(m["bits_per_cycle_gen"], m["bits_per_cycle"], rtol=0.15)   # net count is rounded when writing
+    assert (m["net_count"] >= 1).all()
     assert (m["model_root_gen"] == m["model_root"]).all() and (m["partition_gen"] == m["partition"]).all()
     assert np.allclose(m["fmax_ghz_gen"], m["fmax_ghz"], rtol=5e-3)
     assert df["run_id"].notna().all() and df["source_file"].notna().all()

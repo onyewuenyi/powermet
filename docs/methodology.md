@@ -181,6 +181,17 @@ models' predictions for comparison.
 All V3 numbers are model predictions layered on model predictions; the tables carry the power
 model's CV interval and the perf model's fit quality is reported by `workload summary`.
 
+# Activity from SAIF
+
+Switching activity originates in the RTL simulation FSDB per workload. The FSDB → SAIF flow
+(Verdi; inputs: workload FSDB, core, FE/BE mapping data, partition list) writes a SAIF in the
+back-end physical hierarchy, the same file that drives SAIF-based power optimization in early
+Fusion Compiler. powermet reads that SAIF and aggregates per instance including descendants:
+`activity` = mean over nets of TC / cycles (the activity factor), `bits_per_cycle` = Σ TC / cycles
+(the data-movement traffic proxy), `net_count`. Cycles come from DURATION × TIMESCALE and the
+simulation clock period declared in `metadata.json` (`activity_flow.sim_clock_period_ps`, else
+the nominal operating point). The flow's inputs are recorded as provenance on every activity record.
+
 # Timing, identity and the data-movement model
 
 ## Identity: model_root
@@ -223,7 +234,7 @@ point VIOLATES when `f > min_partition Fmax(V)`, and infeasible points are exclu
 ## Data-movement energy model
 
 Post-layout features `wire_length_um`, `avg_net_length_um` (implementation) and `bits_per_cycle`
-(activity) feed engineered terms:
+(SAIF: bits switched per cycle, the sum of net toggle counts over cycles) feed engineered terms:
 
 | term | definition | attributed to |
 |---|---|---|
