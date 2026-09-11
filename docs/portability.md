@@ -32,6 +32,8 @@ force changes. Those changes should land in adapters and templates, never in the
 
 ## Adaptation checklist for a new environment
 
+0. `powermet init --design <name> --design-type <cpu|gpu|asic|ai_accelerator|soc> [--submit-cmd ...]`
+   writes the project config and copies of every template into the working directory.
 1. Run `powermet sources` and compare each adapter's tool family and versions with what the
    environment produces. Rewrite `parse()` against one real sample per source; keep the records long.
 2. Fill `templates/metadata.template.json` from the flow that owns run identity; set `design_type`.

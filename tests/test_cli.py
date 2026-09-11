@@ -138,3 +138,16 @@ def test_closure_cli(workdir, capsys):
     assert run("intent", "show") == 0
     assert "Power intent (UPF) coverage" in capsys.readouterr().out
     assert run("db", "query", "SELECT COUNT(*) n FROM budget_status") == 0
+
+
+def test_init_scaffolds_templates(workdir, capsys):
+    assert run("init", "--design", "NPU_X", "--design-type", "ai_accelerator", "--submit-cmd", "bsub {cmd}") == 0
+    out = capsys.readouterr().out
+    assert "Template:" in out
+    for name in ("budgets.toml", "RUN_DIRECTORY.md", "example_intent.upf", "example_fub_map.csv", "example_metadata.json"):
+        assert (workdir / name).exists(), name
+    import json
+    meta = json.loads((workdir / "example_metadata.json").read_text())
+    assert meta["design"] == "NPU_X" and meta["design_type"] == "ai_accelerator"
+    assert 'submit_cmd = "bsub {cmd}"' in (workdir / ".powermet" / "config.toml").read_text()
+    assert run("sources") == 0

@@ -67,6 +67,7 @@ powermet intent show                          # UPF domains per FUB, missing dom
 powermet model export                         # compact JSON power model for a performance simulator
 powermet integrate trace mock_runs/traces/GPU_A_phases.csv   # power / throughput / energy timeline of a phase trace
 powermet measure get --fub Scheduler --design GPU_A --stage FE --metric fe_physical_mw   # one number with provenance
+powermet init --design NPU_X --design-type ai_accelerator   # new environment: config + templates to fill in
 powermet sources                              # adapters: stage, tool family, versions written against, patterns, metrics
 powermet ingest plan mock_runs | sh           # scheduler fan-out: one worker job per run writes a Parquet partition
 powermet ingest merge                         # single-writer merge of partitions into the dataset and catalog

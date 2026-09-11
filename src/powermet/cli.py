@@ -613,6 +613,46 @@ def cmd_db_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    """Scaffold a new environment: project directory, config, and the input templates to fill in."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from powermet.config import Config
+
+    project = _project(args)
+    cfg = Config()
+    if args.submit_cmd:
+        cfg.submit_cmd = args.submit_cmd
+    project.init(cfg)
+    templates = Path(__file__).resolve().parents[2] / "templates"
+    dest = Path(args.dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    written = []
+    copies = {"budgets.template.toml": "budgets.toml", "run_directory.README.md": "RUN_DIRECTORY.md",
+              "power_intent.template.upf": "example_intent.upf", "fub_map.template.csv": "example_fub_map.csv"}
+    for src, name in copies.items():
+        target = dest / name
+        if target.exists() and not args.force:
+            continue
+        shutil.copy(templates / src, target)
+        written.append(target)
+    meta = json.loads((templates / "metadata.template.json").read_text())
+    meta["design"], meta["design_type"] = args.design or "DESIGN_NAME", args.design_type or meta["design_type"]
+    target = dest / "example_metadata.json"
+    if not target.exists() or args.force:
+        target.write_text(json.dumps(meta, indent=2))
+        written.append(target)
+    print(f"Project:   {project.root}  (config.toml written; edit source_patterns / disabled_sources / submit_cmd)")
+    for w in written:
+        print(f"Template:  {w}")
+    print()
+    print("Next: export the model root to a fub_map.csv per run, place metadata.json in each run directory,")
+    print("      run `powermet sources` to compare adapters with the tools in use, then `powermet ingest scan <root>`.")
+    return 0
+
+
 def cmd_sources(args: argparse.Namespace) -> int:
     """List every source adapter: what tool it reads, versions it was written against, where it looks, what it yields."""
     from powermet.extract import SOURCE_SPECS
@@ -1172,6 +1212,14 @@ def build_parser() -> argparse.ArgumentParser:
     l1.add_argument("--design", default=None)
     l1.add_argument("--build", default=None)
     l1.set_defaults(func=cmd_lineage_show)
+
+    sp = sub.add_parser("init", help="Scaffold a new environment: project config plus input templates to fill in.")
+    sp.add_argument("--dir", default=".", help="Where to write the templates (default: current directory).")
+    sp.add_argument("--design", default=None)
+    sp.add_argument("--design-type", default=None, help="cpu | gpu | asic | ai_accelerator | soc")
+    sp.add_argument("--submit-cmd", default=None, help='Scheduler template, e.g. "bsub -M 4G -J pm-{design}-{build} {cmd}"')
+    sp.add_argument("--force", action="store_true", help="Overwrite existing template copies.")
+    sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("sources", help="List source adapters: tool family, versions, patterns, metrics.")
     sp.set_defaults(func=cmd_sources)
