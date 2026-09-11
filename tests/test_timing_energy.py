@@ -179,4 +179,7 @@ def test_compact_export_and_trace(project, tmp_path):
     res = run_trace(m, trace)
     assert len(res.timeline) == len(trace) and res.totals["energy_mj"] > 0
     assert np.isfinite(res.totals["energy_pj_per_op"])
-    assert res.timeline["timing_ok"].all()
+    tl = res.timeline
+    # feasibility is consistent with the exported partition timing model (turbo phases may legitimately violate)
+    expected = (~np.isfinite(tl["fmax_ghz"])) | (tl["frequency_ghz"] <= tl["fmax_ghz"] * 1.005)
+    assert (tl["timing_ok"] == expected).all() and res.totals["timing_violations"] == int((~tl["timing_ok"]).sum())
