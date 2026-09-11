@@ -1,0 +1,3 @@
+fub,model_root,partition,fe_hier,synth_object,be_hier
+Scheduler,DESIGN.PARTITION_A.Scheduler,PARTITION_A,top/u_scheduler,Scheduler,top/part_partition_a/u_scheduler
+Decoder,DESIGN.PARTITION_A.Decoder,PARTITION_A,top/u_decoder,Decoder_1,top/part_partition_a/u_decoder

@@ -1,0 +1,23 @@
+# Copy to .powermet/config.toml (or let `powermet ingest` create it) and adjust for the target environment.
+dataset = "data/processed/measurements.parquet"
+target = "be_mw"
+baseline_feature = "fe_physical_mw"
+
+# where each source lives under a run directory; {workload} / {operating_point} expand, globs allowed
+source_patterns = { primepower = "primepower/{workload}_{operating_point}/power_hier.rpt", saif = "activity/{workload}.saif" }
+disabled_sources = []          # e.g. ["perf"] when no performance model export exists yet
+fub_map_pattern = "mapping/fub_map.csv"
+strict_consistency = true      # drop reports whose run id / build disagree with metadata.json
+
+# sanitization
+stale_days = 120
+near_zero_mw = 0.01
+unit_magnitude_ratio = 50.0
+use_sanitized = true
+
+# modeling / validation
+test_fraction = 0.2
+min_builds_warn = 5
+cv_min_builds = 3
+seed = 42
+whatif_model = "datamove"

@@ -18,6 +18,9 @@ from powermet.extract.base import (BE_HIER, tool_name, Located, ParsedReport, So
                                    make_records, parse_header, read_lines, to_float, units_from_text)
 
 SOURCE = "starrc"
+TOOL_FAMILY = "Synopsys StarRC"
+SUPPORTED_VERSIONS = ('V-2023.12', 'V-2024.09')      # versions the representative parser was written against
+DESCRIPTION = "Parasitic wire and pin capacitance per physical hierarchy"
 DEFAULT_PATTERN = "starrc/parasitics_summary.rpt"
 OBJECT_KIND = BE_HIER
 

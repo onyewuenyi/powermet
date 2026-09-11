@@ -15,6 +15,9 @@ import pandas as pd
 from powermet.extract.base import DESIGN, tool_name, Located, ParsedReport, SourceInputs, convert_unit, locate, make_records
 
 SOURCE = "perf"
+TOOL_FAMILY = "Performance model / simulator export"
+SUPPORTED_VERSIONS = ('csv-1',)      # versions the representative parser was written against
+DESCRIPTION = "Design-level IPC and throughput per workload x operating point"
 DEFAULT_PATTERN = "perf/{workload}_{operating_point}.csv"
 OBJECT_KIND = DESIGN
 

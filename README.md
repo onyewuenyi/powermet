@@ -8,6 +8,18 @@ canonical FUB identity (`model_root`).
 No server, no REST API, no UI, no cloud. Everything lives under a local `.powermet/`
 directory you can delete to start over. Python 3.11+.
 
+## Purpose
+
+A battle-tested set of abstractions and a general workflow, built from public knowledge and current
+tools, that can be applied to a company's power methodology in its own compute and execution
+environment for accelerator, GPU, ASIC or SoC projects. It was developed on a CPU program; the unit
+of analysis (`fub`), the workloads and the data-movement terms are deliberately generic so the same
+pipeline transfers. Environment limitations are expected: they are absorbed by adapters, config and
+the files under `templates/`, not by the core abstractions. `docs/portability.md` lists what is
+expected to change, where it lands, and how the workflow stays current as signoff engines and
+activity flows change. `powermet sources` shows every adapter with the tool family and versions it
+was written against.
+
 | Version | Question it answers | Commands |
 |---|---|---|
 | **V0** | Can I correlate FE to BE? | `demo`, `data`, `analyze`, `model train/evaluate`, `report` |
@@ -49,6 +61,7 @@ powermet explore scenario examples/scenarios/gpu_a.toml
 powermet model export                         # compact JSON power model for a performance simulator
 powermet integrate trace mock_runs/traces/GPU_A_phases.csv   # power / throughput / energy timeline of a phase trace
 powermet measure get --fub Scheduler --design GPU_A --stage FE --metric fe_physical_mw   # one number with provenance
+powermet sources                              # adapters: tool family, versions written against, patterns, metrics
 powermet db tables                            # SQLite metadata catalog; `db query "<sql>" [--engine duckdb]`
 powermet profile show
 powermet report                               # .powermet/reports/power_metrology_report.md (24 sections)

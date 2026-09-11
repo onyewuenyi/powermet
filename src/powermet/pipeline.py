@@ -220,6 +220,7 @@ def stamp_provenance(wide: pd.DataFrame, design: str, build: str, meta: dict, ru
     out["run_id"] = meta.get("run_id")
     out["build_date"] = meta.get("build_date")
     out["build_status"] = meta.get("status", "current")
+    out["design_type"] = meta.get("design_type", "unspecified")
     out["source_file"] = str(run_dir)
     out["tool"] = "pipeline"
     out["tool_version"] = ";".join(f"{k}={v}" for k, v in (meta.get("tools") or {}).items())

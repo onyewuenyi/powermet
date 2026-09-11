@@ -7,6 +7,13 @@ Compiler, SAIF activity from the FSDB → SAIF flow, performance) per design/bui
 build-validated power/energy models (including a compact data-movement model), and answers what-if
 questions with timing feasibility and workload traces.
 
+## Purpose
+
+Battle-tested, portable abstractions plus a general workflow (public knowledge, current tools) intended
+to be applied to a company's power methodology for accelerator / GPU / ASIC / SoC projects; developed on a
+CPU program. Environment limitations are absorbed by adapters, config and `templates/`, never the core
+abstractions. `docs/portability.md` is the adaptation checklist; keep it and `powermet sources` current.
+
 ## Layout
 
 - `src/powermet/extract/` — one adapter per EDA source (`get_files()` locates, `parse()` reads). Contract in `base.py`.

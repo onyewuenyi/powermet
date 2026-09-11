@@ -41,6 +41,9 @@ from powermet.extract.base import (BE_HIER, FE_HIER, Located, ParsedReport, Pars
                                    record)
 
 SOURCE = "saif"
+TOOL_FAMILY = "Synopsys Verdi FSDB -> SAIF flow (SAIF 2.0)"
+SUPPORTED_VERSIONS = ('SAIF 2.0',)      # versions the representative parser was written against
+DESCRIPTION = "Switching activity and bits switched per cycle per instance, per workload"
 DEFAULT_PATTERN = "activity/{workload}.saif"
 OBJECT_KIND = BE_HIER          # default; per-file kind decided from context (activity_hierarchy)
 TIMESCALE_TO_PS = {"fs": 1e-3, "ps": 1.0, "ns": 1e3, "us": 1e6, "ms": 1e9, "s": 1e12}

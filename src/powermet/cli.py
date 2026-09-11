@@ -566,6 +566,28 @@ def cmd_db_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sources(args: argparse.Namespace) -> int:
+    """List every source adapter: what tool it reads, versions it was written against, where it looks, what it yields."""
+    from powermet.extract import SOURCES, SOURCE_METRICS
+    from powermet.textfmt import table
+
+    project = _project(args)
+    cfg = project.load_config() if project.exists() else None
+    rows = []
+    for name, mod in SOURCES.items():
+        pattern = cfg.source_patterns.get(name, mod.DEFAULT_PATTERN) if cfg else mod.DEFAULT_PATTERN
+        state = "disabled" if cfg and name in cfg.disabled_sources else ("override" if cfg and name in cfg.source_patterns else "default")
+        rows.append([name, getattr(mod, "TOOL_FAMILY", "?"), ", ".join(getattr(mod, "SUPPORTED_VERSIONS", ())), mod.OBJECT_KIND,
+                     pattern, state, ", ".join(SOURCE_METRICS.get(name, ()))])
+    print(table(["Source", "Tool family", "Written against", "Object", "Pattern (under run dir)", "State", "Metrics"], rows,
+                ["l"] * 7))
+    print()
+    print("Repoint a source: set source_patterns.<name> in .powermet/config.toml, or edit get_files() in src/powermet/extract/<name>.py.")
+    print("Tool version of every parsed file is recorded per record (tool_version) and per file in the catalog (source_file table),")
+    print("so an engine upgrade shows up as a version change in provenance before it shows up as a parse error.")
+    return 0
+
+
 def cmd_measure_get(args: argparse.Namespace) -> int:
     from powermet.measurements import MeasurementStore
 
@@ -983,6 +1005,9 @@ def build_parser() -> argparse.ArgumentParser:
     l1.add_argument("--design", default=None)
     l1.add_argument("--build", default=None)
     l1.set_defaults(func=cmd_lineage_show)
+
+    sp = sub.add_parser("sources", help="List source adapters: tool family, versions, patterns, metrics.")
+    sp.set_defaults(func=cmd_sources)
 
     sp = sub.add_parser("measure", help="Measurement-level access with provenance (model root / FUB / build / stage / metric).")
     ms = sp.add_subparsers(dest="measure_command", metavar="<subcommand>")

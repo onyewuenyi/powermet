@@ -17,6 +17,9 @@ from pathlib import Path
 from powermet.extract.base import DESIGN, tool_name, Located, ParsedReport, SourceInputs, locate, make_records
 
 SOURCE = "metadata"
+TOOL_FAMILY = "Run metadata (metadata.json)"
+SUPPORTED_VERSIONS = ('1',)      # versions the representative parser was written against
+DESCRIPTION = "Identity, dates, tool versions, operating points, activity-flow provenance"
 DEFAULT_PATTERN = "metadata.json"
 OBJECT_KIND = DESIGN
 
@@ -61,6 +64,7 @@ def inputs_from_metadata(run_dir: Path, patterns: dict[str, str] | None = None) 
         nom = ops.get("nom") or (next(iter(ops.values())) if ops else {})
         if nom.get("frequency_ghz"):
             sim_period = 1000.0 / float(nom["frequency_ghz"])
+    meta.setdefault("design_type", "unspecified")     # cpu | gpu | asic | ai_accelerator | soc
     inputs = SourceInputs(
         design=str(meta["design"]), build=str(meta["build"]), run_dir=Path(run_dir),
         workloads=list(meta.get("workloads") or []),

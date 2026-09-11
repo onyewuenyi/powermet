@@ -66,6 +66,7 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("imported_at", "str", PROVENANCE, description="Import timestamp (ISO 8601)"),
     ColumnSpec("run_id", "str", PROVENANCE, description="EDA run identifier"),
     ColumnSpec("build_date", "str", PROVENANCE, description="Build date (YYYY-MM-DD)"),
+    ColumnSpec("design_type", "str", PROVENANCE, description="cpu | gpu | asic | ai_accelerator | soc (from metadata.json)"),
 )
 
 DERIVED_COLUMNS: tuple[str, ...] = (

@@ -29,6 +29,9 @@ from powermet.extract.base import (BE_HIER, tool_name, Located, ParsedReport, So
                                    make_records, parse_header, read_lines, to_float, units_from_text)
 
 SOURCE = "primepower"
+TOOL_FAMILY = "Synopsys PrimePower"
+SUPPORTED_VERSIONS = ('V-2023.12', 'V-2024.09')      # versions the representative parser was written against
+DESCRIPTION = "BE signoff power per physical hierarchy"
 DEFAULT_PATTERN = "primepower/{workload}_{operating_point}/power_hier.rpt"
 OBJECT_KIND = BE_HIER
 METRIC = "be_mw"

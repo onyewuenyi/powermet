@@ -21,7 +21,7 @@ DB_NAME = "metrology.db"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS build (
     design TEXT NOT NULL, build TEXT NOT NULL, build_date TEXT, run_id TEXT, status TEXT,
-    tools TEXT, run_dir TEXT, ingested_at TEXT,
+    tools TEXT, run_dir TEXT, ingested_at TEXT, design_type TEXT,
     PRIMARY KEY (design, build)
 );
 CREATE TABLE IF NOT EXISTS source_file (
@@ -74,10 +74,13 @@ def _now() -> str:
 
 def record_build(project, design: str, build: str, meta: dict, run_dir: Path) -> None:
     with connect(project) as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(build)")]
+        if "design_type" not in cols:                       # migrate catalogs created before design_type existed
+            con.execute("ALTER TABLE build ADD COLUMN design_type TEXT")
         con.execute(
-            "INSERT OR REPLACE INTO build VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO build VALUES (?,?,?,?,?,?,?,?,?)",
             (design, build, meta.get("build_date"), meta.get("run_id"), meta.get("status", "current"),
-             json.dumps(meta.get("tools") or {}), str(run_dir), _now()),
+             json.dumps(meta.get("tools") or {}), str(run_dir), _now(), meta.get("design_type", "unspecified")),
         )
 
 

@@ -30,6 +30,13 @@ lists the powermet modules it imports; anything not listed is standalone apart f
 | **Compact model / integration** | `integrate.py` | `export_compact()` JSON, `CompactPowerModel` standalone evaluator (matches `LinearModel.predict` exactly), `run_trace()` | `curves`, `features`, `modeling` | `test_units_analysis.py` (equivalence, f/V traces, fmax guards), `test_timing_energy.py` |
 | Text output | `textfmt.py` | fixed-width `table()`, `fmt_pct/fmt_mw/fmt_r` with sensible rounding | – | indirectly everywhere |
 
+## Templates for a new environment
+
+`templates/` holds the files you fill in at a target company: `metadata.template.json` (run identity,
+tool versions, operating points, `design_type`, activity-flow provenance), `fub_map.template.csv`
+(the model-root export), `config.template.toml` (source patterns, thresholds, validation) and
+`run_directory.README.md` (layout). See `docs/portability.md` for the adaptation checklist.
+
 ## Patterns worth copying even without the code
 
 - **Long-then-wide.** Every adapter emits `(object, object_kind, metric, value, unit, unit_original)`;

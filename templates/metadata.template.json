@@ -1,0 +1,25 @@
+{
+  "schema_version": "1",
+  "design": "DESIGN_NAME",
+  "design_type": "cpu | gpu | asic | ai_accelerator | soc",
+  "build": "B001",
+  "build_date": "2026-01-15",
+  "run_id": "signoff run identifier shared by every report in this directory",
+  "status": "current | superseded",
+  "model_version": "optional model-root / RTL model version",
+  "tools": {"pprtl": "R-2025.06", "primepower": "V-2024.09", "primetime": "V-2024.09", "starrc": "V-2024.09", "fusion": "V-2024.09", "verdi": "V-2024.09"},
+  "workloads": ["typical", "compute", "memory"],
+  "operating_points": {
+    "nom":   {"voltage_v": 0.80, "frequency_ghz": 2.5},
+    "turbo": {"voltage_v": 0.88, "frequency_ghz": 2.9}
+  },
+  "activity_flow": {
+    "tool": "Verdi",
+    "hierarchy": "be",
+    "sim_clock_period_ps": 400.0,
+    "source_fsdb": {"typical": "/sim/<design>/<build>/typical/rtl.fsdb"},
+    "core": "<core / top module>",
+    "mapping": "mapping/fub_map.csv",
+    "partition_list": ["PARTITION_A", "PARTITION_B"]
+  }
+}

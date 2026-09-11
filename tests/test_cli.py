@@ -110,3 +110,13 @@ def test_timing_energy_integration_cli(workdir, capsys):
     text = (workdir / ".powermet" / "reports" / "power_metrology_report.md").read_text()
     for section in ("20. Metric quality", "21. Build-to-build", "22. Power", "23. Energy decomposition", "24. Compact model"):
         assert section in text
+
+
+def test_sources_and_design_type(workdir, capsys):
+    assert run("sources") == 0
+    out = capsys.readouterr().out
+    assert "saif" in out and "SAIF 2.0" in out and "primetime" in out
+    assert run("mock", "generate", "--designs", "1", "--builds", "2", "--fubs", "6", "--workloads", "typical", "--operating-points", "nom") == 0
+    assert run("ingest", "scan", "mock_runs") == 0
+    assert run("db", "query", "SELECT DISTINCT design_type FROM build") == 0
+    assert "cpu" in capsys.readouterr().out

@@ -100,7 +100,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         nom_op = op_table.get("nom") or next(iter(op_table.values()))
         sim_period_ps = round(1000.0 / nom_op["frequency_ghz"], 1)
         json.dump({
-            "schema_version": "1", "design": design, "build": build, "build_date": m["build_date"],
+            "schema_version": "1", "design": design, "design_type": "cpu", "build": build, "build_date": m["build_date"],
             "run_id": run_id, "status": status,
             "tools": {"pprtl": m["pprtl_version"], "primepower": m["primepower_version"],
                       "starrc": m["starrc_version"], "fusion": m["fusion_version"], "verdi": "V-2024.09"},
