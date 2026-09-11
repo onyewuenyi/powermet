@@ -25,7 +25,8 @@ from powermet.extract.base import (FE_HIER, tool_name, Located, ParsedReport, So
                                    make_records, parse_header, read_lines, to_float, units_from_text)
 
 SOURCE = "pprtl"
-TOOL_FAMILY = "Synopsys PowerPro-RTL / PrimePower RTL"
+STAGE = "FE"
+TOOL_FAMILY = "RTL power: Synopsys PrimePower RTL / Siemens PowerPro / Keysight (ex-Ansys) PowerArtist / Cadence Joules"
 SUPPORTED_VERSIONS = ('R-2024.09', 'R-2025.06')      # versions the representative parser was written against
 DESCRIPTION = "FE logical and physical-aware power per RTL hierarchy"
 DEFAULT_PATTERN = "pprtl/{workload}_{operating_point}/*_power.rpt"

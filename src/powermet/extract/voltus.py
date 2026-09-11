@@ -21,6 +21,7 @@ from powermet.extract.base import (BE_HIER, Located, ParsedReport, SourceInputs,
                                    make_records, parse_header, read_lines, record, to_float, tool_name, units_from_text)
 
 SOURCE = "voltus"
+STAGE = "BE"
 OPTIONAL = True          # absent files are not an ingest error
 TOOL_FAMILY = "Cadence Voltus (alternate signoff engine)"
 SUPPORTED_VERSIONS = ("23.10",)

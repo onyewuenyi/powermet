@@ -11,8 +11,8 @@ from powermet.lineage import (BE_NOT_IN_REPORTS, DESIGN_FUB, NO_PARTITION, TIMIN
                               render_chain, resolve, resolve_objects)
 from powermet.metrics import add_derived_metrics, fmax_from_timing, prediction_metrics
 from powermet.mockdata import write_mock_runs
-from powermet.pipeline import (attach_identity, extract_run, find_runs, ingest_runs, join_metric, pivot_fub_records, pivot_perf_records,
-                               verify_run_consistency)
+from powermet.pipeline import (RunResult, attach_identity, extract_run, find_partitions, find_runs, ingest_runs, join_metric,
+                               merge_partitions, pivot_fub_records, pivot_perf_records, plan_jobs, verify_run_consistency)
 from powermet.sanitize import run_sanitize
 from powermet.storage import load_dataset, load_table
 
@@ -181,3 +181,33 @@ def test_aggregate_rows_are_not_unmapped():
                                                 "be_hier": "top/part_p0/u_a"}]), "D")
     mapped, unmapped = resolve_objects(rec, model)
     assert len(mapped) == 0 and unmapped["object"].tolist() == ["top/u_zz"]
+
+
+def test_partitioned_ingest_matches_serial(tmp_path):
+    root, data, _ = write_mock_runs(tmp_path / "runs", SPEC, defects=True)
+    runs = find_runs(root)
+    serial = Project(tmp_path / "serial" / ".powermet")
+    ingest_runs(serial, runs)
+    a = load_dataset(serial, raw=True)
+    # worker mode: one partition per run, no dataset or catalog touched
+    fan = Project(tmp_path / "fan" / ".powermet")
+    fan.init()
+    pdir = fan.root / "data" / "processed" / "runs"
+    jobs = plan_jobs(runs, pdir, submit_cmd="submit -J pm-{design}-{build} {cmd}")
+    assert len(jobs) == len(runs) and jobs[0].startswith("submit -J pm-") and "--partition-dir" in jobs[0]
+    for rd in runs:
+        res = extract_run(rd, Config())
+        res.save_partition(pdir)
+    assert not fan.dataset_path().exists() and len(find_partitions(pdir)) == len(runs)
+    back = RunResult.load_partition(find_partitions(pdir)[0])
+    assert back.source_rows() and back.source_rows()[0]["sha256"]
+    summary = merge_partitions(fan, pdir)
+    b = load_dataset(fan, raw=True)
+    cols = [c for c in a.columns if c != "imported_at"]
+    key = ["design", "build", "fub", "workload", "operating_point"]
+    pd.testing.assert_frame_equal(a[cols].sort_values(key).reset_index(drop=True), b[cols].sort_values(key).reset_index(drop=True))
+    for name in ("measurements_long", "lineage", "unmapped", "performance", "power_intent"):
+        assert len(load_table(serial, name)) == len(load_table(fan, name)), name
+    from powermet.catalog import query
+    assert len(query(serial, "SELECT * FROM source_file")) == len(query(fan, "SELECT * FROM source_file"))
+    assert summary.n_rows == len(b)

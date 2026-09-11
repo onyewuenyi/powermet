@@ -17,7 +17,8 @@ of analysis (`fub`), the workloads and the data-movement terms are deliberately 
 pipeline transfers. Environment limitations are expected: they are absorbed by adapters, config and
 the files under `templates/`, not by the core abstractions. `docs/portability.md` lists what is
 expected to change, where it lands, and how the workflow stays current as signoff engines and
-activity flows change. `powermet sources` shows every adapter with the tool family and versions it
+activity flows change; `docs/tool-landscape.md` is the reference of current Synopsys, Cadence, Keysight
+and data/AI tools per methodology stage, each to be confirmed at the target company. `powermet sources` shows every adapter with the tool family and versions it
 was written against.
 
 | Version | Question it answers | Commands |
@@ -66,7 +67,9 @@ powermet intent show                          # UPF domains per FUB, missing dom
 powermet model export                         # compact JSON power model for a performance simulator
 powermet integrate trace mock_runs/traces/GPU_A_phases.csv   # power / throughput / energy timeline of a phase trace
 powermet measure get --fub Scheduler --design GPU_A --stage FE --metric fe_physical_mw   # one number with provenance
-powermet sources                              # adapters: tool family, versions written against, patterns, metrics
+powermet sources                              # adapters: stage, tool family, versions written against, patterns, metrics
+powermet ingest plan mock_runs | sh           # scheduler fan-out: one worker job per run writes a Parquet partition
+powermet ingest merge                         # single-writer merge of partitions into the dataset and catalog
 powermet db tables                            # SQLite metadata catalog; `db query "<sql>" [--engine duckdb]`
 powermet profile show
 powermet report                               # .powermet/reports/power_metrology_report.md (24 sections)
@@ -133,6 +136,10 @@ long provenance table. See `docs/extractors.md`.
   outliers, lineage mismatches, missing/inconsistent timing, unmapped objects. Plus a **per-metric trust
   table** (`metric_quality.parquet`): coverage, association with BE power, stability of that association
   across builds, unit conversions, outliers, verdict.
+- **Fan-out**: `ingest plan` prints one worker command per run directory (wrapped in the scheduler
+  template from config); `ingest run --partition-dir` extracts one run and writes only a Parquet partition
+  (no dataset, no catalog, no locks); `ingest merge` is the single writer that validates, merges and
+  catalogs. Serial and fan-out produce identical datasets (tested).
 - **Catalog**: `metrology.db` (SQLite) holds builds, source files with SHA-256 and tool versions, import
   runs, quality runs, models and profiles; Parquet holds the measurements; DuckDB queries both.
 - **Profiling**: every ingest/sanitize/analyze/train command appends stage wall/CPU time and peak RSS to

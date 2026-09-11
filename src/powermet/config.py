@@ -42,6 +42,9 @@ class Config:
     upf_pattern: str = "intent/*.upf"   # power intent under the run directory ("" to skip)
     budgets_file: str = "budgets.toml"  # relative to the project root's parent (the working dir) unless absolute
     qualify_tolerance_pct: float = 5.0
+    # scheduler fan-out: `ingest plan` wraps each job in this template ({design}, {build}, {cmd}); "" = bare command
+    submit_cmd: str = ""
+    partition_dir: str = "data/processed/runs"   # relative to the project root
     # V1 sanitization
     stale_days: int = 120
     near_zero_mw: float = 0.01

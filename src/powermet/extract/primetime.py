@@ -25,6 +25,7 @@ from powermet.extract.base import (PARTITION, Located, ParsedReport, SourceInput
                                    make_records, parse_header, read_lines, record, to_float, tool_name)
 
 SOURCE = "primetime"
+STAGE = "TIMING"
 TOOL_FAMILY = "Synopsys PrimeTime"
 SUPPORTED_VERSIONS = ('V-2023.12', 'V-2024.09')      # versions the representative parser was written against
 DESCRIPTION = "Partition timing: period, WNS, TNS, violating endpoints"

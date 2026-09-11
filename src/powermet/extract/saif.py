@@ -41,6 +41,7 @@ from powermet.extract.base import (BE_HIER, FE_HIER, Located, ParsedReport, Pars
                                    record)
 
 SOURCE = "saif"
+STAGE = "ACTIVITY"
 TOOL_FAMILY = "Synopsys Verdi FSDB -> SAIF flow (SAIF 2.0)"
 SUPPORTED_VERSIONS = ('SAIF 2.0',)      # versions the representative parser was written against
 DESCRIPTION = "Switching activity and bits switched per cycle per instance, per workload"

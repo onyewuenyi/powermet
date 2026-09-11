@@ -21,7 +21,7 @@ force changes. Those changes should land in adapters and templates, never in the
 |---|---|---|
 | Report locations and naming | NFS trees, artifact stores, per-team conventions | `source_patterns` in config; `get_files()` per adapter |
 | Report formats and engine versions | vendor-exact output, new PrimePower / PrimeTime / StarRC releases, Cadence instead of Synopsys | `parse()` per adapter; `SUPPORTED_VERSIONS`; `tool_version` in provenance flags the change first |
-| Execution environment | batch schedulers, no local write access, restricted Python | CLI stays argparse and pure Python; `.powermet/` root via `--project-dir` / `POWERMET_HOME` |
+| Execution environment | batch schedulers, no local write access, restricted Python | CLI stays argparse and pure Python; `.powermet/` root via `--project-dir` / `POWERMET_HOME`; `ingest plan` / `ingest run --partition-dir` / `ingest merge` fan out through any submitter (`submit_cmd` template) with one writer |
 | Storage | shared catalog, object storage | `catalog.py` schema is plain SQL (SQLite → PostgreSQL); Parquet stays; DuckDB optional |
 | Identity export | model root as a database, a YAML, a tool query | `ModelRoot.from_frame()` from any frame; `identity.py` is the only matching code |
 | Unit of analysis | FUB (CPU) → unit, SM, cluster, PE, tile (GPU / accelerator) | the schema column is still `fub`; `model_root` carries the real name; labels are one dict |
@@ -42,6 +42,8 @@ force changes. Those changes should land in adapters and templates, never in the
    anything else. Unmapped objects and consistency errors are the environment telling you where
    its conventions differ.
 6. Only then correlate, model and explore. Calibrate against the next signoff build.
+
+See `docs/tool-landscape.md` for the current tool options per stage and the confirmation checklist.
 
 ## Keeping it current as the technology changes
 

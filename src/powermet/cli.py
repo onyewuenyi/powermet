@@ -444,11 +444,58 @@ def _print_ingest_summary(summary, verbose: bool) -> None:
 def cmd_ingest_run(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from powermet.pipeline import ingest_runs
+    from powermet.pipeline import extract_run, ingest_runs
+    from powermet.profiling import Profiler
 
     project = _project(args)
+    if args.partition_dir:
+        # scheduler-safe worker mode: extract one run, write a Parquet partition, touch nothing shared
+        cfg = project.load_config()
+        prof = Profiler("ingest run (partition)")
+        try:
+            res = extract_run(Path(args.run_dir), cfg, prof)
+        except (FileNotFoundError, ValueError) as exc:
+            raise CliError(str(exc))
+        out = res.save_partition(Path(args.partition_dir))
+        for e in res.errors:
+            print(f"ERROR  {e}")
+        print(f"{res.design}/{res.build}: {len(res.wide):,} FUB rows, {len(res.long):,} records, {len(res.flags)} lineage flags -> {out}")
+        return 0
     try:
         summary = ingest_runs(project, [Path(args.run_dir)], replace=not args.append)
+    except (FileNotFoundError, ValueError) as exc:
+        raise CliError(str(exc))
+    _print_ingest_summary(summary, args.verbose)
+    return 0
+
+
+def cmd_ingest_plan(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from powermet.pipeline import find_runs, plan_jobs
+
+    project = _project(args)
+    cfg = project.load_config()
+    runs = find_runs(Path(args.root))
+    if not runs:
+        raise CliError(f"no run directories (*/*/metadata.json) found under {args.root}")
+    pdir = Path(args.partition_dir) if args.partition_dir else project.root / cfg.partition_dir
+    for line in plan_jobs(runs, pdir, args.submit_cmd if args.submit_cmd is not None else cfg.submit_cmd, args.project_dir):
+        print(line)
+    print(f"# {len(runs)} jobs; afterwards run: powermet ingest merge --partition-dir {pdir}", file=sys.stderr)
+    return 0
+
+
+def cmd_ingest_merge(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from powermet.pipeline import merge_partitions
+
+    project = _project(args)
+    cfg = project.load_config()
+    pdir = Path(args.partition_dir) if args.partition_dir else project.root / cfg.partition_dir
+    try:
+        summary = merge_partitions(project, pdir, replace=not args.append)
     except (FileNotFoundError, ValueError) as exc:
         raise CliError(str(exc))
     _print_ingest_summary(summary, args.verbose)
@@ -568,19 +615,20 @@ def cmd_db_query(args: argparse.Namespace) -> int:
 
 def cmd_sources(args: argparse.Namespace) -> int:
     """List every source adapter: what tool it reads, versions it was written against, where it looks, what it yields."""
-    from powermet.extract import SOURCES, SOURCE_METRICS
+    from powermet.extract import SOURCE_SPECS
     from powermet.textfmt import table
 
     project = _project(args)
     cfg = project.load_config() if project.exists() else None
     rows = []
-    for name, mod in SOURCES.items():
-        pattern = cfg.source_patterns.get(name, mod.DEFAULT_PATTERN) if cfg else mod.DEFAULT_PATTERN
+    for name, sp in SOURCE_SPECS.items():
+        pattern = cfg.source_patterns.get(name, sp.default_pattern) if cfg else sp.default_pattern
         state = "disabled" if cfg and name in cfg.disabled_sources else ("override" if cfg and name in cfg.source_patterns else "default")
-        rows.append([name, getattr(mod, "TOOL_FAMILY", "?"), ", ".join(getattr(mod, "SUPPORTED_VERSIONS", ())), mod.OBJECT_KIND,
-                     pattern, state, ", ".join(SOURCE_METRICS.get(name, ()))])
-    print(table(["Source", "Tool family", "Written against", "Object", "Pattern (under run dir)", "State", "Metrics"], rows,
-                ["l"] * 7))
+        if sp.optional:
+            state += ", optional"
+        rows.append([name, sp.stage, sp.tool_family, ", ".join(sp.supported_versions), sp.object_kind, pattern, state, ", ".join(sp.metrics)])
+    print(table(["Source", "Stage", "Tool family", "Written against", "Object", "Pattern (under run dir)", "State", "Metrics"], rows,
+                ["l"] * 8))
     print()
     print("Repoint a source: set source_patterns.<name> in .powermet/config.toml, or edit get_files() in src/powermet/extract/<name>.py.")
     print("Tool version of every parsed file is recorded per record (tool_version) and per file in the catalog (source_file table),")
@@ -1094,7 +1142,18 @@ def build_parser() -> argparse.ArgumentParser:
     r1.add_argument("run_dir")
     r1.add_argument("--append", action="store_true", help="Merge into the existing dataset instead of replacing it.")
     r1.add_argument("--verbose", action="store_true", help="Print lineage flags per run.")
+    r1.add_argument("--partition-dir", default=None, help="Worker mode: write a Parquet partition here and do not touch the dataset or catalog.")
     r1.set_defaults(func=cmd_ingest_run)
+    r3 = ig.add_parser("plan", help="Print one scheduler job per run directory (worker mode); pipe to sh or your submitter.")
+    r3.add_argument("root")
+    r3.add_argument("--partition-dir", default=None, help="Default: <project>/data/processed/runs")
+    r3.add_argument("--submit-cmd", default=None, help='Template with {design} {build} {cmd}, e.g. "bsub -M 4G -J pm-{design}-{build} {cmd}"')
+    r3.set_defaults(func=cmd_ingest_plan)
+    r4 = ig.add_parser("merge", help="Single-writer step: merge worker partitions into the dataset and catalog.")
+    r4.add_argument("--partition-dir", default=None)
+    r4.add_argument("--append", action="store_true")
+    r4.add_argument("--verbose", action="store_true")
+    r4.set_defaults(func=cmd_ingest_merge)
     r2 = ig.add_parser("scan", help="Ingest every <design>/<build>/metadata.json under a root directory.")
     r2.add_argument("root")
     r2.add_argument("--append", action="store_true")

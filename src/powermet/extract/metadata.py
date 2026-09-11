@@ -17,6 +17,7 @@ from pathlib import Path
 from powermet.extract.base import DESIGN, tool_name, Located, ParsedReport, SourceInputs, locate, make_records
 
 SOURCE = "metadata"
+STAGE = "DESIGN"
 TOOL_FAMILY = "Run metadata (metadata.json)"
 SUPPORTED_VERSIONS = ('1',)      # versions the representative parser was written against
 DESCRIPTION = "Identity, dates, tool versions, operating points, activity-flow provenance"

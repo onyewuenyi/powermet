@@ -22,7 +22,8 @@ abstractions. `docs/portability.md` is the adaptation checklist; keep it and `po
 - Power closure: `budgets.py` (milestone budgets), `intent.py` (UPF), `qualify.py` (engine/estimator qualification), `hotspots.py`.
 - `modeling.py` (MODEL_REGISTRY, build-based split/CV), `features.py`, `decomposition.py`, `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `explore.py`, `integrate.py`.
 - `cli.py` is argparse only; business logic lives in modules. `reporting.py` builds the 24-section Markdown report.
-- `docs/reusable-components.md` maps every liftable abstraction to module, deps and tests. `docs/methodology.md`, `docs/extractors.md`.
+- `docs/reusable-components.md` maps every liftable abstraction to module, deps and tests. `docs/methodology.md`, `docs/extractors.md`, `docs/portability.md`, `docs/tool-landscape.md` (vendor/AI tool options per stage; confirm per company).
+- Fan-out: `ingest plan` -> worker `ingest run --partition-dir` (Parquet only) -> `ingest merge` (single writer). Keep workers free of catalog writes.
 
 ## Working rules
 

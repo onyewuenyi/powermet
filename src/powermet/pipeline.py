@@ -49,6 +49,50 @@ class RunResult:
     errors: list[str] = field(default_factory=list)
     status: str = "current"
     intent: pd.DataFrame = field(default_factory=pd.DataFrame)
+    report_rows: list[dict] = field(default_factory=list)     # serialisable provenance per parsed file (set on save/load)
+
+    def source_rows(self) -> list[dict]:
+        """Per-file provenance for the catalog; computed from parsed reports or restored from a partition."""
+        if self.report_rows:
+            return self.report_rows
+        rows = []
+        for rep in self.reports:
+            rows.append({"source": rep.source, "path": str(rep.path), "sha256": file_sha256(rep.path), "tool": rep.tool,
+                         "tool_version": rep.tool_version, "run_id": rep.run_id, "report_date": rep.report_date,
+                         "workload": rep.workload, "operating_point": rep.operating_point, "n_records": int(rep.n_records)})
+        self.report_rows = rows
+        return rows
+
+    # ---- partition I/O: one directory per run, Parquet only (no catalog, no locks) -> scheduler-safe
+    TABLES = ("wide", "long", "perf", "lineage", "unmapped", "intent")
+
+    def save_partition(self, out_dir: Path) -> Path:
+        import json
+
+        out_dir = Path(out_dir) / f"{self.design}__{self.build}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name in self.TABLES:
+            write_table(getattr(self, name), out_dir / f"{name}.parquet")
+        (out_dir / "run.json").write_text(json.dumps({
+            "design": self.design, "build": self.build, "run_dir": str(self.run_dir), "status": self.status,
+            "flags": self.flags, "errors": self.errors, "reports": self.source_rows(),
+            "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }, indent=2))
+        return out_dir
+
+    @classmethod
+    def load_partition(cls, part_dir: Path) -> "RunResult":
+        import json
+
+        part_dir = Path(part_dir)
+        meta = json.loads((part_dir / "run.json").read_text())
+        tables = {}
+        for name in cls.TABLES:
+            p = part_dir / f"{name}.parquet"
+            tables[name] = pd.read_parquet(p) if p.exists() else pd.DataFrame()
+        return cls(meta["design"], meta["build"], Path(meta["run_dir"]), [], tables["long"], tables["wide"], tables["perf"],
+                   tables["lineage"], tables["unmapped"], list(meta.get("flags", [])), list(meta.get("errors", [])),
+                   meta.get("status", "current"), tables["intent"], list(meta.get("reports", [])))
 
 
 @dataclass
@@ -256,7 +300,7 @@ def stamp_provenance(wide: pd.DataFrame, design: str, build: str, meta: dict, ru
     out["build_status"] = meta.get("status", "current")
     out["design_type"] = meta.get("design_type", "unspecified")
     out["milestone"] = meta.get("milestone", "signoff")
-    out["source_file"] = str(run_dir)
+    out["source_file"] = str(Path(run_dir).resolve())
     out["tool"] = "pipeline"
     out["tool_version"] = ";".join(f"{k}={v}" for k, v in (meta.get("tools") or {}).items())
     out["imported_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -288,12 +332,54 @@ def find_runs(root: Path) -> list[Path]:
 
 def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = None, replace: bool = True,
                 prof: Profiler | None = None) -> IngestSummary:
+    """Serial path: extract every run directory in this process, then store."""
     cfg = project.init(cfg)
     prof = prof or Profiler("ingest")
     results: list[RunResult] = []
     for rd in run_dirs:
         results.append(extract_run(Path(rd), cfg, prof))
+    return store_results(project, results, cfg, replace=replace, prof=prof)
 
+
+def plan_jobs(run_dirs: list[Path], partition_dir: Path, submit_cmd: str = "", project_dir: str | None = None) -> list[str]:
+    """One shell line per run directory for a scheduler: `powermet ingest run <dir> --partition-dir <out>`.
+
+    submit_cmd is a template with {design}, {build}, {cmd} placeholders, e.g.
+    "bsub -M 4G -J pm-{design}-{build} {cmd}". Empty -> the bare command (run locally or pipe to `sh`)."""
+    import shlex
+    import sys
+
+    exe = Path(sys.argv[0]).resolve() if Path(sys.argv[0]).name.startswith("powermet") else "powermet"
+    lines = []
+    for rd in run_dirs:
+        rd = Path(rd)
+        build, design = rd.name, rd.parent.name
+        cmd = f"{shlex.quote(str(exe))}{' --project-dir ' + shlex.quote(project_dir) if project_dir else ''} ingest run {shlex.quote(str(rd.resolve()))} --partition-dir {shlex.quote(str(Path(partition_dir).resolve()))}"
+        lines.append(submit_cmd.format(design=design, build=build, cmd=cmd) if submit_cmd else cmd)
+    return lines
+
+
+def find_partitions(partition_dir: Path) -> list[Path]:
+    return sorted(p.parent for p in Path(partition_dir).glob("*/run.json"))
+
+
+def merge_partitions(project: Project, partition_dir: Path, cfg: Config | None = None, replace: bool = True,
+                     prof: Profiler | None = None) -> IngestSummary:
+    """Single-writer step: load every partition written by `ingest run --partition-dir` and store the dataset + catalog."""
+    cfg = project.init(cfg)
+    prof = prof or Profiler("ingest merge")
+    parts = find_partitions(partition_dir)
+    if not parts:
+        raise FileNotFoundError(f"no partitions (*/run.json) under {partition_dir}")
+    with prof.stage("load partitions", rows=len(parts)):
+        results = [RunResult.load_partition(p) for p in parts]
+    return store_results(project, results, cfg, replace=replace, prof=prof)
+
+
+def store_results(project: Project, results: list[RunResult], cfg: Config, replace: bool = True,
+                  prof: Profiler | None = None) -> IngestSummary:
+    """Validate, derive, merge and persist extracted runs. The only step that writes the dataset and catalog."""
+    prof = prof or Profiler("store")
     with prof.stage("validation") as st:
         wide = pd.concat([r.wide for r in results], ignore_index=True) if results else pd.DataFrame()
         long = pd.concat([r.long for r in results], ignore_index=True) if results else pd.DataFrame()
@@ -362,19 +448,17 @@ def ingest_runs(project: Project, run_dirs: list[Path], cfg: Config | None = Non
 
 
 def _log_imports(project: Project, results: list[RunResult], ds_path: Path) -> None:
-    from functools import lru_cache
-
     from powermet.catalog import record_build, record_import, record_source_files
     from powermet.extract.metadata import load as load_meta
 
-    sha_of = lru_cache(maxsize=None)(lambda p: file_sha256(p))
     for r in results:
-        meta = load_meta(r.run_dir / "metadata.json")
+        meta = load_meta(r.run_dir / "metadata.json") if (r.run_dir / "metadata.json").exists() else {"design": r.design, "build": r.build}
         record_build(project, r.design, r.build, meta, r.run_dir)
-        record_source_files(project, r.design, r.build, r.reports, sha_of)
+        rows = r.source_rows()
+        record_source_files(project, r.design, r.build, rows)
         record_import(project, {
-            "source_file": str(r.run_dir), "sha256": sha_of(r.run_dir / "metadata.json"),
+            "source_file": str(r.run_dir), "sha256": file_sha256(r.run_dir / "metadata.json") if (r.run_dir / "metadata.json").exists() else "",
             "rows_imported": int(len(r.wide)), "rows_rejected": 0, "dataset": str(ds_path),
             "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "design": r.design, "build": r.build, "n_reports": len(r.reports), "errors": r.errors,
+            "design": r.design, "build": r.build, "n_reports": len(rows), "errors": r.errors,
         })

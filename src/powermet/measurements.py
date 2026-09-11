@@ -16,11 +16,8 @@ from typing import Iterator
 
 import pandas as pd
 
-STAGE_OF_SOURCE = {
-    "pprtl": "FE", "saif": "ACTIVITY",
-    "primepower": "BE", "voltus": "BE", "primetime": "TIMING", "starrc": "PHYS", "implementation": "PHYS",
-    "metadata": "DESIGN", "perf": "PERF",
-}
+from powermet.extract import STAGE_OF_SOURCE  # single source of truth: each adapter declares its STAGE
+
 STAGES = tuple(sorted(set(STAGE_OF_SOURCE.values())))
 KEY = ("design", "build", "fub", "stage", "metric", "workload", "operating_point")
 

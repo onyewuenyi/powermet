@@ -21,6 +21,7 @@ from powermet.extract.base import (BE_HIER, tool_name, Located, ParsedReport, So
                                    make_records, parse_header, read_lines, to_float, units_from_text)
 
 SOURCE = "implementation"
+STAGE = "PHYS"
 TOOL_FAMILY = "Synopsys Fusion Compiler (or Cadence Innovus QoR)"
 SUPPORTED_VERSIONS = ('V-2023.12', 'V-2024.09')      # versions the representative parser was written against
 DESCRIPTION = "Area, cell count, fanout, wire length per physical hierarchy"

@@ -57,7 +57,10 @@ def test_record_helper_and_object_kinds():
 
 
 def test_registry_consistency():
-    assert set(SOURCES) == set(SOURCE_METRICS)
+    from powermet.extract import SOURCE_SPECS, STAGE_OF_SOURCE
+    assert set(SOURCES) == set(SOURCE_METRICS) == set(SOURCE_SPECS)
+    assert all(sp.stage != "OTHER" and sp.tool_family != "?" and sp.supported_versions for sp in SOURCE_SPECS.values())
+    assert STAGE_OF_SOURCE["saif"] == "ACTIVITY" and SOURCE_SPECS["voltus"].optional
     for src, ms in SOURCE_METRICS.items():
         for m in ms:
             assert m in METRIC_SCOPE, f"{src}:{m} missing from METRIC_SCOPE"

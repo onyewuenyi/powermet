@@ -1,10 +1,34 @@
-"""EDA source adapters. Each module: SOURCE, DEFAULT_PATTERN, OBJECT_KIND, get_files(), parse()."""
+"""EDA source adapters. Each module: SOURCE, DEFAULT_PATTERN, OBJECT_KIND, get_files(), parse(),
+plus TOOL_FAMILY, SUPPORTED_VERSIONS, DESCRIPTION, STAGE and optional OPTIONAL. `SOURCE_SPECS` is the
+declarative view of that contract, built from the modules so nothing is declared twice."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from powermet.extract import implementation, metadata, perf, pprtl, primepower, primetime, saif, starrc, voltus
 
-SOURCES = {m.SOURCE: m for m in (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf, voltus)}
+_MODULES = (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf, voltus)
+SOURCES = {m.SOURCE: m for m in _MODULES}
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    name: str
+    tool_family: str
+    supported_versions: tuple[str, ...]
+    description: str
+    object_kind: str
+    default_pattern: str
+    stage: str                   # FE | BE | PHYS | TIMING | ACTIVITY | DESIGN | PERF
+    optional: bool
+    metrics: tuple[str, ...]
+
+
+def _spec(m) -> SourceSpec:
+    return SourceSpec(m.SOURCE, getattr(m, "TOOL_FAMILY", "?"), tuple(getattr(m, "SUPPORTED_VERSIONS", ())),
+                      getattr(m, "DESCRIPTION", ""), m.OBJECT_KIND, m.DEFAULT_PATTERN, getattr(m, "STAGE", "OTHER"),
+                      bool(getattr(m, "OPTIONAL", False)), tuple(SOURCE_METRICS.get(m.SOURCE, ())))
 
 # metrics each source is expected to deliver (used by lineage/sanitize to report gaps)
 SOURCE_METRICS = {
@@ -39,6 +63,9 @@ METRIC_SCOPE = {
     "throughput_gops": ("workload", "operating_point"),
 }
 
+SOURCE_SPECS: dict[str, SourceSpec] = {m.SOURCE: _spec(m) for m in _MODULES}
+STAGE_OF_SOURCE = {name: sp.stage for name, sp in SOURCE_SPECS.items()}
+
 PERF_METRICS = tuple(SOURCE_METRICS["perf"])
 DESIGN_LEVEL_METRICS = tuple(SOURCE_METRICS["metadata"])
 
@@ -49,4 +76,5 @@ def metrics_with_scope(*keys: str) -> tuple[str, ...]:
     return tuple(m for m, scope in METRIC_SCOPE.items() if tuple(scope) == want)
 
 
-__all__ = ["SOURCES", "SOURCE_METRICS", "METRIC_SCOPE", "PERF_METRICS", "DESIGN_LEVEL_METRICS", "metrics_with_scope"]
+__all__ = ["SOURCES", "SOURCE_SPECS", "SourceSpec", "STAGE_OF_SOURCE", "SOURCE_METRICS", "METRIC_SCOPE", "PERF_METRICS",
+           "DESIGN_LEVEL_METRICS", "metrics_with_scope"]

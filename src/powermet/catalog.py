@@ -89,9 +89,10 @@ def record_build(project, design: str, build: str, meta: dict, run_dir: Path) ->
         )
 
 
-def record_source_files(project, design: str, build: str, reports, sha_of) -> None:
-    rows = [(design, build, r.source, str(r.path), sha_of(r.path), r.tool, r.tool_version, r.run_id, r.report_date,
-             r.workload, r.operating_point, int(r.n_records), _now()) for r in reports]
+def record_source_files(project, design: str, build: str, reports: list[dict]) -> None:
+    """`reports`: dicts with source, path, sha256, tool, tool_version, run_id, report_date, workload, operating_point, n_records."""
+    rows = [(design, build, r["source"], r["path"], r.get("sha256"), r.get("tool"), r.get("tool_version"), r.get("run_id"),
+             r.get("report_date"), r.get("workload"), r.get("operating_point"), int(r.get("n_records") or 0), _now()) for r in reports]
     with connect(project) as con:
         con.execute("DELETE FROM source_file WHERE design = ? AND build = ?", (design, build))
         con.executemany("INSERT INTO source_file (design, build, source, path, sha256, tool, tool_version, run_id, report_date, "
