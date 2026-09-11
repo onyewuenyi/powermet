@@ -85,13 +85,19 @@ def cmd_data_import(args: argparse.Namespace) -> int:
 
 
 def _load(args: argparse.Namespace):
-    from powermet.storage import load_dataset
+    from powermet.storage import load_dataset, sanitized_path
 
     project = _project(args)
     try:
-        return project, project.load_config(), load_dataset(project)
+        cfg = project.load_config()
+        df = load_dataset(project, cfg)
     except FileNotFoundError as exc:
         raise CliError(str(exc))
+    if cfg.use_sanitized and not sanitized_path(project).exists() and project.processed_dir.exists() \
+            and (project.processed_dir / "lineage.parquet").exists():
+        print("NOTE: no sanitized dataset (a new ingest invalidates it); analysing RAW rows including flagged ones. "
+              "Run `powermet sanitize` first.", file=sys.stderr)
+    return project, cfg, df
 
 
 def cmd_analyze_summary(args: argparse.Namespace) -> int:

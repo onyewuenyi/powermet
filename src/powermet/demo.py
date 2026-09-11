@@ -150,7 +150,7 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
             build = f"B{b + 1:03d}"
             meta_rows.append({
                 "design": design, "build": build,
-                "build_date": (base_date + pd.Timedelta(days=14 * b + d)).strftime("%Y-%m-%d"),
+                "build_date": (base_date + pd.Timedelta(days=12 * b + d)).strftime("%Y-%m-%d"),
                 "run_id": f"{design.lower()}_{build.lower()}_r{rng.integers(1000, 9999)}",
                 "pprtl_version": "R-2025.06-SP2", "primepower_version": "V-2024.09-SP3",
                 "starrc_version": "V-2024.09", "fusion_version": "V-2024.09-SP4",
