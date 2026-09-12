@@ -151,3 +151,17 @@ def test_init_scaffolds_templates(workdir, capsys):
     assert meta["design"] == "NPU_X" and meta["design_type"] == "ai_accelerator"
     assert 'submit_cmd = "bsub {cmd}"' in (workdir / ".powermet" / "config.toml").read_text()
     assert run("sources") == 0
+
+
+def test_profiles_techniques_methodology_cli(workdir, capsys):
+    assert run("profiles", "list") == 0 and "replicated_units" in capsys.readouterr().out
+    assert run("profiles", "show", "flattened_backend") == 0 and "Implication" in capsys.readouterr().out
+    assert run("techniques", "list") == 0 and "clock_gating" in capsys.readouterr().out
+    assert run("init", "--profile", "same_hierarchy") == 0
+    assert 'kind = "same_hierarchy"' in (workdir / ".powermet" / "config.toml").read_text()
+    assert run("mock", "generate", "--methodology", "same_hierarchy", "--designs", "1", "--builds", "3", "--fubs", "8",
+               "--workloads", "idle,typical", "--operating-points", "nom,turbo") == 0
+    assert run("ingest", "scan", "mock_runs") == 0
+    assert run("sanitize") == 0
+    assert run("techniques", "assess", "--design", "GPU_A", "--top", "3") == 0
+    assert "Clock gating" in capsys.readouterr().out

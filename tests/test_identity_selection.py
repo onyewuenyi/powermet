@@ -40,20 +40,25 @@ class TestModelRoot:
         with pytest.raises(ValueError, match="missing columns"):
             ModelRoot.from_frame(pd.DataFrame({"fub": ["A"], "fe_hier": ["x"]}), "D")
 
-    def test_duplicate_fub_raises(self):
+    def test_duplicate_row_raises_but_split_rows_are_allowed(self):
         df = pd.concat([_map_frame(), _map_frame().iloc[[0]]])
-        with pytest.raises(ValueError, match="duplicate FUB"):
+        with pytest.raises(ValueError, match="duplicate rows"):
             ModelRoot.from_frame(df, "D")
+        split = _map_frame().iloc[[0]].copy()
+        split["be_hier"] = "top/u_a_part2"
+        mr = ModelRoot.from_frame(pd.concat([_map_frame(), split]), "D")
+        assert len(mr) == 3 and mr.relationships()["split"] == ["A"]
+        assert mr.resolve("top/u_a_part2", "be_hier")[0].spec.fub == "A"
 
     def test_resolve_by_kind(self):
         mr = ModelRoot.from_frame(_map_frame(), "D")
-        assert mr.resolve("top/u_b", "fe_hier")[0].fub == "B"
-        assert mr.resolve("top/u_b_phys", "be_hier")[0].fub == "B"
+        assert mr.resolve("top/u_b", "fe_hier")[0].spec.fub == "B"
+        assert mr.resolve("top/u_b_phys", "be_hier")[0].spec.fub == "B"
         assert mr.resolve("top/u_b", "be_hier") == []                         # BE path differs from FE path
-        assert [f.fub for f in mr.resolve("top/part_pcore0", "partition")] == ["A", "B"]
-        assert [f.fub for f in mr.resolve("PCORE0", "partition")] == ["A", "B"]  # bare name also accepted
+        assert [m.spec.fub for m in mr.resolve("top/part_pcore0", "partition")] == ["A", "B"]
+        assert [m.spec.fub for m in mr.resolve("PCORE0", "partition")] == ["A", "B"]  # bare name also accepted
         assert mr.resolve("top/part_nope", "partition") == []
-        assert len(mr.resolve("*", "design")) == 3
+        assert len(mr.resolve("*", "design")) == 3 and all(m.weight == 1.0 for m in mr.resolve("*", "design"))
         with pytest.raises(ValueError):
             mr.resolve("x", "bogus")
 
@@ -63,6 +68,48 @@ class TestModelRoot:
         mr = ModelRoot.load(p, "D", model_version="v2")
         assert mr.model_version == "v2" and mr.source == str(p)
         pd.testing.assert_frame_equal(mr.to_frame(), ModelRoot.from_frame(mr.to_frame(), "D").to_frame())
+
+
+class TestIdentityStrategies:
+    def test_same_hierarchy_kind_fills_be_from_fe(self):
+        from powermet.identity import IdentityStrategy
+        df = pd.DataFrame({"fub": ["A"], "fe_hier": ["top/u_a"]})
+        mr = ModelRoot.from_frame(df, "D", strategy=IdentityStrategy(kind="same_hierarchy"))
+        assert mr.fub("A").be_hier == "top/u_a" and mr.resolve("top/u_a", "be_hier")[0].spec.fub == "A"
+
+    def test_name_rules_strip_suffixes_and_dividers(self):
+        from powermet.identity import IdentityStrategy, NameRules
+        rules = NameRules(rules=[(r"_(?:phys|r\d+)$", ""), (r"_\d+$", "")], divider=".", strip_top=True)
+        st = IdentityStrategy(name_rules=rules)
+        mr = ModelRoot.from_frame(_map_frame(), "D", strategy=st)
+        # map paths and report names are both normalised: 'top.u_a_phys' -> 'u_a', map 'top/u_a' -> 'u_a'
+        assert mr.resolve("top.u_a_phys", "be_hier")[0].spec.fub == "A"
+        assert mr.resolve("top.u_c_1", "be_hier")[0].spec.fub == "C"
+        assert rules.normalize("\\bus[3]") == "bus[3]"
+
+    def test_replicated_instances_sum_or_per_instance(self):
+        from powermet.identity import IdentityStrategy
+        df = pd.DataFrame([{"fub": "SM", "fe_hier": "top/u_sm", "synth_object": "SM", "be_hier": "top/part_gfx/u_sm_*"}])
+        mr = ModelRoot.from_frame(df, "D")
+        assert mr.relationships()["replicated"] == ["SM"]
+        m = mr.resolve("top/part_gfx/u_sm_3", "be_hier")
+        assert m[0].spec.fub == "SM" and m[0].weight == 1.0 and m[0].instance is None
+        mr2 = ModelRoot.from_frame(df, "D", strategy=IdentityStrategy(replica_policy="per_instance"))
+        m2 = mr2.resolve("top/part_gfx/u_sm_3", "be_hier")
+        assert m2[0].instance == "3" and mr2.instances["SM"] == {"3"}          # label = what the wildcard matched
+        assert mr.is_ancestor("top/part_gfx")
+
+    def test_merged_block_apportions_by_share(self):
+        from powermet.identity import IdentityStrategy
+        df = pd.DataFrame([
+            {"fub": "A", "fe_hier": "top/u_a", "synth_object": "A", "be_hier": "top/u_grp", "be_share": 3.0},
+            {"fub": "B", "fe_hier": "top/u_b", "synth_object": "B", "be_hier": "top/u_grp", "be_share": 1.0},
+        ])
+        mr = ModelRoot.from_frame(df, "D")
+        m = {x.spec.fub: x.weight for x in mr.resolve("top/u_grp", "be_hier")}
+        assert m == {"A": 0.75, "B": 0.25} and mr.relationships()["merged"] == ["A", "B"]
+        eq = ModelRoot.from_frame(df, "D", strategy=IdentityStrategy(merge_basis="equal"))
+        assert {x.weight for x in eq.resolve("top/u_grp", "be_hier")} == {0.5}
 
 
 def _long():

@@ -58,6 +58,9 @@ class DemoSpec:
     seed: int = 42
     workloads: tuple[str, ...] = ("typical",)
     operating_points: tuple[str, ...] = ("nom",)
+    # how the back-end hierarchy relates to the FUBs in the mock run directories (mockdata.BE_LAYOUTS):
+    # separate | same_hierarchy | replicated | merged | split | mixed
+    methodology: str = "separate"
 
 
 PARTITION_NAMES = ["PCORE0", "PCORE1", "MEMSS", "IOFAB", "GFX0", "GFX1", "NPU0", "MISC"]

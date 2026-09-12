@@ -1,0 +1,18 @@
+name = "same_hierarchy"
+title = "Back end preserves the RTL hierarchy"
+setup = """
+Synthesis and place-and-route keep the logical hierarchy (no ungrouping across FUB boundaries), so BE
+reports, gate-level SAIF and PrimePower all name the same instances the RTL does. The FUB map only needs
+the FE path; the BE path is the same string.
+"""
+problem = "None for identity. The risk is assuming this holds after an optimisation pass ungroups a block; the unmapped list catches it."
+implication = "Gate-level FSDB/VCD can be converted directly (read_saif) with no name mapping; FE-to-BE correlation is one-to-one."
+[identity]
+kind = "same_hierarchy"
+replica_policy = "sum"
+merge_basis = "share"
+name_rules = []
+[activity]
+hierarchy = "be"
+[notes]
+activity = "gate-level SAIF at the same hierarchy; set activity_flow.hierarchy = 'be'"

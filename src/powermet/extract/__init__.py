@@ -66,6 +66,18 @@ METRIC_SCOPE = {
 SOURCE_SPECS: dict[str, SourceSpec] = {m.SOURCE: _spec(m) for m in _MODULES}
 STAGE_OF_SOURCE = {name: sp.stage for name, sp in SOURCE_SPECS.items()}
 
+# how a metric combines when several report objects map to one FUB (split FUBs, replicated instances)
+# or when one object is apportioned across FUBs (merged blocks): extensive metrics add, intensive ones average,
+# timing takes the worst value, design-level values are taken as-is.
+METRIC_AGG = {
+    "fe_logical_mw": "sum", "fe_physical_mw": "sum", "be_mw": "sum", "be_voltus_mw": "sum",
+    "wire_cap_pf": "sum", "cell_cap_pf": "sum", "area": "sum", "cell_count": "sum", "wire_length_um": "sum",
+    "bits_per_cycle": "sum", "net_count": "sum", "violating_endpoints": "sum", "tns_ps": "sum",
+    "activity": "mean", "fanout": "mean", "avg_net_length_um": "mean", "cg_efficiency": "mean",
+    "wns_ps": "min", "clock_period_ps": "first", "frequency_ghz": "first", "voltage_v": "first",
+    "ipc": "first", "throughput_gops": "first",
+}
+
 PERF_METRICS = tuple(SOURCE_METRICS["perf"])
 DESIGN_LEVEL_METRICS = tuple(SOURCE_METRICS["metadata"])
 
@@ -76,5 +88,5 @@ def metrics_with_scope(*keys: str) -> tuple[str, ...]:
     return tuple(m for m, scope in METRIC_SCOPE.items() if tuple(scope) == want)
 
 
-__all__ = ["SOURCES", "SOURCE_SPECS", "SourceSpec", "STAGE_OF_SOURCE", "SOURCE_METRICS", "METRIC_SCOPE", "PERF_METRICS",
+__all__ = ["SOURCES", "SOURCE_SPECS", "SourceSpec", "STAGE_OF_SOURCE", "SOURCE_METRICS", "METRIC_SCOPE", "METRIC_AGG", "PERF_METRICS",
            "DESIGN_LEVEL_METRICS", "metrics_with_scope"]

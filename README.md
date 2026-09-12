@@ -67,7 +67,10 @@ powermet intent show                          # UPF domains per FUB, missing dom
 powermet model export                         # compact JSON power model for a performance simulator
 powermet integrate trace mock_runs/traces/GPU_A_phases.csv   # power / throughput / energy timeline of a phase trace
 powermet measure get --fub Scheduler --design GPU_A --stage FE --metric fe_physical_mw   # one number with provenance
-powermet init --design NPU_X --design-type ai_accelerator   # new environment: config + templates to fill in
+powermet profiles list                        # methodology profiles: same hierarchy, separate + map, replicated units, flattened BE, RTL-only activity
+powermet init --design NPU_X --design-type ai_accelerator --profile replicated_units   # config + templates for that setup
+powermet techniques list                      # power-optimisation techniques: problem, mechanism, trade-off, considerations
+powermet techniques assess --design GPU_A     # rank candidate FUBs per technique with stated assumptions
 powermet sources                              # adapters: stage, tool family, versions written against, patterns, metrics
 powermet ingest plan mock_runs | sh           # scheduler fan-out: one worker job per run writes a Parquet partition
 powermet ingest merge                         # single-writer merge of partitions into the dataset and catalog
@@ -107,6 +110,15 @@ drives SAIF-based power optimization in early Fusion Compiler. powermet reads th
 instance, `activity` = mean toggles per cycle per net, `bits_per_cycle` = total toggles per cycle, with the
 simulation clock period and the flow's inputs (FSDB path, core, mapping, partition list) recorded in
 `metadata.json` under `activity_flow` and carried as provenance.
+
+**Methodology variants.** Companies differ in how FE and BE hierarchies relate: same hierarchy, separate
+hierarchies with a map, renamed or uniquified instances, replicated units (cores, SMs, PEs), merged blocks
+after synthesis ungrouping, FUBs split across partitions. `identity.IdentityStrategy` (kind, replica policy,
+merge basis, name rules) handles each; the FUB map may carry several rows per FUB, a shared BE path with
+`be_share`, or a glob BE path; extensive metrics add and intensive ones average across many-to-one objects;
+`lineage.parquet` records the relationship per FUB. `docs/methodology-variants.md` catalogues the setups,
+the problem each creates and the switch that handles it; profiles bundle the switches. The mock generator
+produces every layout (`--methodology`).
 
 **Identity.** The model root is the source of truth: `ModelRoot` (`identity.py`) loads the FUB list with
 `model_root` (e.g. `GPU_A.PCORE0.Scheduler`), partition and FE/BE hierarchy from `mapping/fub_map.csv`,
@@ -163,6 +175,10 @@ long provenance table. See `docs/extractors.md`.
   power-for-performance trade; `analyze frontier` plots power vs worst-partition Fmax across builds.
 - **Energy decomposition**: `analyze energy` splits predicted power into compute, wire, data-movement and
   leakage shares and reports the fitted pJ per bit-mm.
+- **Techniques**: `techniques list` documents clock gating, power gating, DVFS, wire-cap reduction, multi-Vt,
+  operand isolation, glitch reduction and memory sleep (problem, mechanism, trade-off, considerations, data
+  needed); `techniques assess` ranks candidate FUBs and estimates savings under stated assumptions, and says
+  which source would enable the techniques it cannot assess (`docs/power-techniques.md`).
 - **Power closure**: `budget check` tracks budgets per design / partition / FUB against a per-milestone
   tolerance with trend, FUB coverage and the model's error band; `intent show` verifies UPF domains and
   supply states against the operating points; `qualify` compares two estimates of the same quantity (engine
@@ -203,7 +219,7 @@ module, its dependencies and the tests that pin its behaviour.
 activity, perf), `identity.py`, `lineage.py`, `measurements.py`, `selection.py`, `pipeline.py`, `sanitize.py`,
 `catalog.py`, `profiling.py`, `mockdata.py`, `demo.py`, `schema.py`, `validation.py`, `ingest.py`, `storage.py`,
 `metrics.py`, `features.py`, `correlation.py`, `errors.py`, `summary.py`, `budgets.py`, `intent.py`, `qualify.py`,
-`hotspots.py`, `modeling.py`, `decomposition.py`,
+`hotspots.py`, `techniques.py`, `profiles.py`, `modeling.py`, `decomposition.py`,
 `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `workload.py`, `explore.py`, `integrate.py`,
 `visualization.py`, `reporting.py` (`energy.py` is a compatibility facade).
 

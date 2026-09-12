@@ -1,0 +1,18 @@
+name = "flattened_backend"
+title = "Flattened / ungrouped back end (typical ASIC flow)"
+setup = """
+Synthesis ungroups small modules for QoR, so several FUBs end up inside one BE block (u_grp_12) and the
+per-FUB split no longer exists in signoff reports. Some FUBs may also be split across two physical
+partitions for floorplanning.
+"""
+problem = "BE power exists only for the merged block; per-FUB BE power is an apportionment, not a measurement."
+implication = "Map several FUBs to the shared BE path with be_share (area or cell-count ratio, or a PrimePower group report if available). Totals per block are exact; per-FUB numbers carry the apportion assumption and should be labelled as such in correlation. Split FUBs get several map rows and are summed."
+[identity]
+kind = "explicit_map"
+replica_policy = "sum"
+merge_basis = "share"
+name_rules = [["_grp(\\d+)$", "_grp\\1"]]
+[activity]
+hierarchy = "be"
+[notes]
+apportion = "be_share from cell count is the default; prefer a group-level power report from the signoff tool when one exists"

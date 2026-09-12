@@ -36,6 +36,114 @@ import pandas as pd
 from powermet.demo import DemoData, DemoSpec, generate_all
 
 
+BE_LAYOUTS = ("separate", "same_hierarchy", "replicated", "merged", "split", "mixed")
+EXTENSIVE = ("be_mw", "wire_cap_pf", "cell_cap_pf", "area", "cell_count", "wire_length_um", "bits_per_cycle")
+
+
+def be_layout(h: pd.DataFrame, methodology: str, top: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Decide how each FUB appears in back-end reports under a methodology.
+
+    Returns (objects, fub_map):
+      objects: one row per BE object: fub, path, fraction (share of the FUB's extensive metrics), partition,
+               members (for merged blocks: the FUBs whose values are summed into the object)
+      fub_map: the six columns plus be_share; several rows per FUB (split) or a shared be_hier (merged) or a
+               glob be_hier (replicated) as the methodology requires
+    """
+    if methodology not in BE_LAYOUTS:
+        raise ValueError(f"methodology must be one of {BE_LAYOUTS}")
+    fubs = list(h.index)
+    parts = sorted(h["partition"].unique())
+    objs, rows = [], []
+    merged_with: dict[str, str] = {}
+    for i, fub in enumerate(fubs):
+        part = h.loc[fub, "partition"]
+        fe = h.loc[fub, "fe_hier"]
+        leaf = f"u_{fub.lower()}"
+        base = {"fub": fub, "model_root": h.loc[fub, "model_root"], "partition": part, "fe_hier": fe, "synth_object": h.loc[fub, "synth_object"]}
+        kind = "separate"
+        if methodology == "same_hierarchy":
+            kind = "same"
+        elif methodology == "replicated" and i % 4 == 1:
+            kind = "replicated"
+        elif methodology == "merged" and i % 6 in (2, 3) and i + 1 < len(fubs):
+            kind = "merged"
+        elif methodology == "split" and i % 5 == 4 and len(parts) > 1:
+            kind = "split"
+        elif methodology == "mixed":
+            kind = {1: "replicated", 2: "merged", 3: "merged", 4: "split"}.get(i % 9, "separate") if len(parts) > 1 else "separate"
+        if kind == "same":
+            objs.append({"fub": fub, "path": fe, "fraction": 1.0, "partition": part, "members": [fub]})
+            rows.append({**base, "be_hier": fe, "be_share": 1.0})
+        elif kind == "replicated":
+            fr = (0.55, 0.45)
+            for k, f in enumerate(fr):
+                objs.append({"fub": fub, "path": f"{top}/part_{part.lower()}/{leaf}_{k}", "fraction": f, "partition": part, "members": [fub]})
+            rows.append({**base, "be_hier": f"{top}/part_{part.lower()}/{leaf}_*", "be_share": 1.0})
+        elif kind == "merged":
+            # pair consecutive FUBs of the same partition into one ungrouped BE block
+            j = i + 1 if (i % 6 == 2 or i % 9 == 2) else i - 1
+            partner = fubs[j] if 0 <= j < len(fubs) and h.loc[fubs[j], "partition"] == part else None
+            if partner is None:
+                objs.append({"fub": fub, "path": f"{top}/part_{part.lower()}/{leaf}", "fraction": 1.0, "partition": part, "members": [fub]})
+                rows.append({**base, "be_hier": f"{top}/part_{part.lower()}/{leaf}", "be_share": 1.0})
+                continue
+            grp = f"{top}/part_{part.lower()}/u_grp_{min(i, j)}"
+            merged_with[fub] = partner
+            share = float(h.loc[fub, "n_instances"]) / float(h.loc[fub, "n_instances"] + h.loc[partner, "n_instances"])
+            rows.append({**base, "be_hier": grp, "be_share": round(share, 4)})
+            if not any(o["path"] == grp for o in objs):
+                objs.append({"fub": fub, "path": grp, "fraction": 1.0, "partition": part, "members": [fub, partner]})
+        elif kind == "split":
+            other = parts[(parts.index(part) + 1) % len(parts)]
+            objs.append({"fub": fub, "path": f"{top}/part_{part.lower()}/{leaf}", "fraction": 0.6, "partition": part, "members": [fub]})
+            objs.append({"fub": fub, "path": f"{top}/part_{other.lower()}/{leaf}_split", "fraction": 0.4, "partition": other, "members": [fub]})
+            rows.append({**base, "be_hier": f"{top}/part_{part.lower()}/{leaf}", "be_share": 1.0})
+            rows.append({**base, "partition": other, "be_hier": f"{top}/part_{other.lower()}/{leaf}_split", "be_share": 1.0})
+        else:
+            objs.append({"fub": fub, "path": f"{top}/part_{part.lower()}/{leaf}", "fraction": 1.0, "partition": part, "members": [fub]})
+            rows.append({**base, "be_hier": f"{top}/part_{part.lower()}/{leaf}", "be_share": 1.0})
+    return pd.DataFrame(objs), pd.DataFrame(rows)
+
+
+def object_values(objs: pd.DataFrame, sub: pd.DataFrame, cols: tuple[str, ...]) -> pd.DataFrame:
+    """Per BE object values from per-FUB values: extensive columns scaled by fraction and summed over
+    members (merged blocks), intensive columns averaged."""
+    out = []
+    for _, o in objs.iterrows():
+        members = [m for m in o["members"] if m in sub.index]
+        if not members:
+            continue
+        row = {"fub": o["fub"], "path": o["path"], "partition": o["partition"]}
+        for c in cols:
+            if c not in sub.columns:
+                continue
+            vals = sub.loc[members, c].astype(float)
+            row[c] = float(vals.sum()) * o["fraction"] if c in EXTENSIVE else float(vals.mean())
+        out.append(row)
+    return pd.DataFrame(out)
+
+
+def hierarchical_rows(paths_values: list[tuple[str, float]]) -> list[tuple[int, str, float]]:
+    """(depth, leaf, value) rows for a PrimePower-style indented report from full paths, with
+    aggregate rows for every ancestor (value = sum of descendants)."""
+    tree: dict = {}
+    for path, v in paths_values:
+        node = tree
+        for seg in path.split("/"):
+            node = node.setdefault(seg, {"__v": 0.0, "__c": {}})
+            node["__v"] += v
+            node = node["__c"]
+    out: list[tuple[int, str, float]] = []
+
+    def walk(children: dict, depth: int):
+        for name, node in children.items():          # first-seen order, but every subtree stays contiguous
+            out.append((depth, name, node["__v"]))
+            walk(node["__c"], depth + 1)
+
+    walk(tree, 0)
+    return out
+
+
 @dataclass
 class MockDefects:
     enabled: bool = True
@@ -114,6 +222,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
             "tools": {"pprtl": m["pprtl_version"], "primepower": m["primepower_version"],
                       "starrc": m["starrc_version"], "fusion": m["fusion_version"], "verdi": "V-2024.09"},
             "workloads": wls, "operating_points": op_table,
+            "methodology": spec.methodology,
             "activity_flow": {
                 "tool": "Verdi", "hierarchy": "be", "sim_clock_period_ps": sim_period_ps,
                 "source_fsdb": {wl: f"/sim/{design.lower()}/{build.lower()}/{wl}/rtl.fsdb" for wl in wls},
@@ -124,25 +233,25 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         if status == "superseded":
             log.append(f"{design}/{build}: metadata status=superseded (stale build)")
 
-        # ---- mapping/fub_map.csv
+        # ---- mapping/fub_map.csv (shape depends on the BE methodology) and the BE object layout
+        top = design.lower() + "_top"
+        objs, fmap = be_layout(h, spec.methodology, top)
         (run_dir / "mapping").mkdir(exist_ok=True)
-        h.reset_index()[["fub", "model_root", "partition", "fe_hier", "synth_object", "be_hier"]].to_csv(
+        fmap[["fub", "model_root", "partition", "fe_hier", "synth_object", "be_hier", "be_share"]].to_csv(
             run_dir / "mapping" / "fub_map.csv", index=False)
+        if renamed_unmapped:          # BE renamed these after the map was exported: their objects will not resolve
+            objs = objs.copy()
+            objs["path"] = [p_ + "_r2" if f_ in renamed_unmapped else p_ for f_, p_ in zip(objs["fub"], objs["path"])]
 
-        def be_name(fub: str) -> str:
-            name = h.loc[fub, "be_hier"]
-            return name + "_r2" if fub in renamed_unmapped else name
-
-        # ---- primepower per workload x op (physical hierarchy: top -> partition -> block)
+        # ---- primepower per workload x op (hierarchical report over the BE object layout)
         pp_unit = "mW" if design == d_units_pp else "W"
-        parts = sorted(h["partition"].unique())
         for wl in wls:
             for op in ops:
                 sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)].set_index("fub")
+                ov = object_values(objs, sub, ("be_mw",))
                 out = run_dir / "primepower" / f"{wl}_{op}"
                 out.mkdir(parents=True, exist_ok=True)
-                top = design.lower() + "_top"
-                total = sub["be_mw"].sum()
+                total = float(ov["be_mw"].sum())
                 scale = 1.0 if pp_unit == "mW" else 1e-3
                 vectorless = (design == vectorless_design and wl == "idle")
                 lines = ["*" * 60, "Report : power -hierarchy", f"Design : {top}",
@@ -155,23 +264,26 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 def prow(indent, label, v, pct):
                     return f"{' ' * indent}{label:{40 - indent}}{v*0.45:11.4e}{v*0.45:11.4e}{v*0.10:11.4e}{v:11.4e}{pct:7.1f}"
 
-                lines.append(prow(0, top, total * scale, 100.0))
-                for part in parts:
-                    members = [f for f in h[h["partition"] == part].index if f in sub.index]
-                    ptotal = float(sub.loc[members, "be_mw"].sum())
-                    lines.append(prow(2, f"part_{part.lower()} (PART_{part})", ptotal * scale, ptotal / total * 100))
-                    for fub in members:
-                        r = sub.loc[fub]
-                        leaf = be_name(fub).split("/")[-1]
-                        v = r["be_mw"]
-                        if vectorless:
-                            v = v * float(rng.uniform(0.85, 1.25))     # default-activity estimate: biased and noisier
-                        if zero_pp == fub:
-                            v = 0.0004
-                        row = prow(4, f"{leaf} ({h.loc[fub, 'synth_object']})", v * scale, r["be_mw"] / total * 100)
+                pv = []
+                for _, o in ov.iterrows():
+                    v = o["be_mw"]
+                    if vectorless:
+                        v = v * float(rng.uniform(0.85, 1.25))     # default-activity estimate: biased and noisier
+                    if zero_pp == o["fub"]:
+                        v = 0.0004
+                    pv.append((o["path"], v))
+                leaves = {p_: v for p_, v in pv}
+                ref = {o["path"]: h.loc[o["fub"], "synth_object"] for _, o in ov.iterrows()}
+                for depth, leaf, v in hierarchical_rows(pv):
+                    key = None
+                    for p_ in leaves:
+                        if p_.endswith("/" + leaf) or p_ == leaf:
+                            key = p_
+                    label = leaf if depth == 0 else (f"{leaf} ({ref[key]})" if key in ref and leaves.get(key) == v else f"{leaf} ({leaf.upper()})")
+                    row = prow(depth * 2, label, v * scale, v / total * 100 if total else 0.0)
+                    lines.append(row)
+                    if dup_pp and key in leaves and leaves[key] == v and ov[ov["path"] == key]["fub"].iloc[0] == dup_pp:
                         lines.append(row)
-                        if dup_pp == fub:
-                            lines.append(row)
                 (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
         if pp_unit != "W":
             log.append(f"{design}/{build}: PrimePower reported in mW (unit variant)")
@@ -240,14 +352,15 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                  f"Design: {design.lower()}_top   Corner: typical_rc", f"Run: {run_id}",
                  f"Capacitance units: {rc_unit}",
                  f"{'Instance':44}{'Nets':>8}{'TotalCap':>12}{'WireCap':>12}{'PinCap':>12}"]
-        for _, r in first.iterrows():
+        ov = object_values(objs, first.set_index("fub"), ("wire_cap_pf", "cell_cap_pf", "cell_count"))
+        for _, r in ov.iterrows():
             fub = r["fub"]
             if fub in missing_rc:
                 continue
             w, c = r["wire_cap_pf"] * rc_scale, r["cell_cap_pf"] * rc_scale
             if neg_rc == fub:
                 w = -w
-            lines.append(f"{be_name(fub):44}{int(r['cell_count'] * 0.36):8d}{w + c:12.4f}{w:12.4f}{c:12.4f}")
+            lines.append(f"{r['path']:44}{int(r['cell_count'] * 0.36):8d}{w + c:12.4f}{w:12.4f}{c:12.4f}")
         if stale_signoff == (design, build):
             lines[3] = f"Run: {run_id}_old"
             log.append(f"{design}/{build}: StarRC report carries a different run id (stale signoff artifact)")
@@ -267,8 +380,9 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                  f"Clock: core_clk   Frequency: {nom['frequency_ghz']*1000:.0f} MHz   Voltage: {nom['voltage_v']:.2f} V",
                  "Area units: um^2   Length units: um",
                  f"{'Hierarchy':44}{'CellArea':>12}{'CellCount':>12}{'AvgFanout':>12}{'Utilization':>13}{'WireLength':>14}{'AvgNetLen':>12}"]
-        for _, r in first.iterrows():
-            lines.append(f"{be_name(r['fub']):44}{r['area']:12.1f}{int(r['cell_count']):12d}{r['fanout']:12.2f}{0.55 + 0.3 * rng.random():13.2f}"
+        ov = object_values(objs, first.set_index("fub"), ("area", "cell_count", "fanout", "wire_length_um", "avg_net_length_um"))
+        for _, r in ov.iterrows():
+            lines.append(f"{r['path']:44}{r['area']:12.1f}{int(r['cell_count']):12d}{r['fanout']:12.2f}{0.55 + 0.3 * rng.random():13.2f}"
                          f"{r['wire_length_um']:14.1f}{r['avg_net_length_um']:12.3f}")
         (run_dir / "implementation" / "qor_summary.rpt").write_text("\n".join(lines) + "\n")
 
@@ -279,29 +393,39 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         parts = sorted(h["partition"].unique())
         for wl in wls:
             sub = mrows[(mrows.workload == wl) & (mrows.operating_point == ops[0])].set_index("fub")
+            ov = object_values(objs, sub, ("activity", "bits_per_cycle"))
             lines = ["(SAIFILE", '(SAIFVERSION "2.0")', '(DIRECTION "backward")', f'(DESIGN "{top}")',
                      f'(DATE "{m["build_date"]}")', '(VENDOR "Synopsys")', '(PROGRAM_NAME "Verdi")', '(VERSION "V-2024.09")',
-                     "(DIVIDER / )", "(TIMESCALE 1 ps)", f"(DURATION {duration_ps})", f"(INSTANCE {top}"]
-            for part in parts:
-                lines.append(f"  (INSTANCE part_{part.lower()}")
-                for fub in h[h["partition"] == part].index:
-                    if fub not in sub.index:
-                        continue
-                    r = sub.loc[fub]
-                    leaf = be_name(fub).split("/")[-1]
-                    n_nets = int(round(r["bits_per_cycle"] / max(r["activity"], 1e-6)))
-                    n_nets = max(1, n_nets)
-                    tc = int(round(r["activity"] * cycles))
-                    lines.append(f"    (INSTANCE {leaf}")
-                    lines.append("      (NET")
+                     "(DIVIDER / )", "(TIMESCALE 1 ps)", f"(DURATION {duration_ps})"]
+            # nest instances by path; every object is a leaf instance with its own NET block
+            tree: dict = {}
+            for _, o in ov.iterrows():
+                node = tree
+                for seg in o["path"].split("/"):
+                    node = node.setdefault(seg, {})
+                node["__obj__"] = o
+
+            def emit(name, node, depth):
+                ind = "  " * depth
+                lines.append(f"{ind}(INSTANCE {name}")
+                o = node.get("__obj__")
+                if o is not None:
+                    n_nets = max(1, int(round(o["bits_per_cycle"] / max(o["activity"], 1e-6))))
+                    tc = int(round(o["activity"] * cycles))
+                    lines.append(f"{ind}  (NET")
                     for k in range(n_nets):
                         jitter = int(rng.integers(-tc // 10 - 1, tc // 10 + 2)) if tc > 10 else 0
                         t1 = int(duration_ps * rng.uniform(0.3, 0.7))
-                        lines.append(f"        (d\\[{k}\\] (T0 {duration_ps - t1}) (T1 {t1}) (TX 0) (TC {max(tc + jitter, 0)}) (IG 0))")
-                    lines.append("      )")
-                    lines.append("    )")
-                lines.append("  )")
-            lines.append("))")
+                        lines.append(f"{ind}    (d\\[{k}\\] (T0 {duration_ps - t1}) (T1 {t1}) (TX 0) (TC {max(tc + jitter, 0)}) (IG 0))")
+                    lines.append(f"{ind}  )")
+                for child, sub_node in node.items():
+                    if child != "__obj__":
+                        emit(child, sub_node, depth + 1)
+                lines.append(f"{ind})")
+
+            for name, node in tree.items():
+                emit(name, node, 0)
+            lines.append(")")
             (run_dir / "activity" / f"{wl}.saif").write_text("\n".join(lines) + "\n")
 
         # ---- voltus (alternate signoff engine) on recent builds: small systematic bias vs PrimePower
@@ -314,9 +438,10 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                     lines = ["Cadence Voltus Power Report", "Version: 23.10", f"Design: {top}   Run: {run_id}   Date: {m['build_date']}",
                              f"Activity: SAIF   Scenario: {wl}@{op}", "Units: mW",
                              f"{'Instance':44}{'Internal':>10}{'Switching':>11}{'Leakage':>9}{'Total':>9}"]
-                    for _, r in sub.iterrows():
+                    ov = object_values(objs, sub.set_index("fub"), ("be_mw",))
+                    for _, r in ov.iterrows():
                         v = r["be_mw"] * 0.97 * float(rng.lognormal(0, 0.03))
-                        lines.append(f"{be_name(r['fub']):44}{v*0.5:10.2f}{v*0.42:11.2f}{v*0.08:9.2f}{v:9.2f}")
+                        lines.append(f"{r['path']:44}{v*0.5:10.2f}{v*0.42:11.2f}{v*0.08:9.2f}{v:9.2f}")
                     (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
 
         # ---- UPF power intent: one domain per partition, supply states per operating point
@@ -328,7 +453,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                 continue
             net = f"VDD_{part}"
             upf += [f"create_supply_port {net}", f"create_supply_net {net}",
-                    f"create_power_domain PD_{part} -elements {{{top}/part_{part.lower()}}}",
+                    f"create_power_domain PD_{part} -elements {{{(' '.join(sorted(set(objs[objs['partition'] == part]['path']))) if spec.methodology == 'same_hierarchy' else top + '/part_' + part.lower())}}}",
                     f"set_domain_supply_net PD_{part} -primary_power_net {net} -primary_ground_net VSS"]
             states = " ".join(f"-state {{{op} {vals['voltage_v'] + (0.05 if (design == upf_v_mismatch and op == 'turbo' and part == sorted(h['partition'].unique())[0]) else 0.0):.3f}}}"
                               for op, vals in op_table.items())

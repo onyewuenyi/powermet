@@ -1,0 +1,18 @@
+name = "replicated_units"
+title = "Replicated units (cores, SMs, PEs, slices)"
+setup = """
+One RTL module is instantiated N times in the back end (u_sm_0 ... u_sm_15), often as a hard macro
+placed repeatedly. FE power is per module; BE power is per instance and instances differ by placement
+and by activity.
+"""
+problem = "Which instance is 'the FUB'? Summing hides per-instance variation; per-instance loses the FE pairing."
+implication = "Use a glob BE path in the map (top/part_gfx/u_sm_*). replica_policy = 'sum' reports the unit total (FE x N comparable); 'per_instance' keeps each replica as fub@i for outlier hunting. Activity per instance comes from the physical-hierarchy SAIF."
+[identity]
+kind = "explicit_map"
+replica_policy = "sum"
+merge_basis = "share"
+name_rules = []
+[activity]
+hierarchy = "be"
+[notes]
+alternative = "replica_policy = 'per_instance' to keep each replica as its own row"

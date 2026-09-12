@@ -17,10 +17,10 @@ from pathlib import Path
 import pandas as pd
 
 from powermet.config import Config, Project
-from powermet.extract import DESIGN_LEVEL_METRICS, METRIC_SCOPE, PERF_METRICS, SOURCES
+from powermet.extract import DESIGN_LEVEL_METRICS, METRIC_AGG, METRIC_SCOPE, PERF_METRICS, SOURCES
 from powermet.extract.base import ParseError, ParsedReport
 from powermet.extract.metadata import inputs_from_metadata
-from powermet.identity import ModelRoot
+from powermet.identity import IdentityStrategy, ModelRoot
 from powermet.ingest import file_sha256, write_table
 from powermet.intent import DEFAULT_PATTERN as UPF_PATTERN, intent_table, load_upf
 from powermet.lineage import DESIGN_FUB, resolve
@@ -159,12 +159,14 @@ def extract_run(run_dir: Path, cfg: Config, prof: Profiler | None = None) -> Run
         map_path = run_dir / cfg.fub_map_pattern
         if not map_path.exists():
             raise FileNotFoundError(f"FUB map not found: {map_path}")
-        model = ModelRoot.load(map_path, design, model_version=meta.get("model_version"))
+        model = ModelRoot.load(map_path, design, model_version=meta.get("model_version"),
+                               strategy=IdentityStrategy.from_config(cfg.identity))
         lin = resolve(long, model, design, build, sources_present={r.source for r in reports})
         st.rows = len(lin.lineage)
 
     with prof.stage("pivot to FUB dataset", detail=f"{design}/{build}") as st:
         wide = pivot_fub_records(lin.mapped)
+        wide = distribute_module_metrics(wide, lin.mapped, model)
         wide = attach_identity(wide, model)
         wide["fmax_ghz"] = fmax_from_timing(wide["clock_period_ps"], wide["wns_ps"])
         wide = attach_activity_mode(wide, lin.mapped)
@@ -224,21 +226,48 @@ def _normalize(reports: list[ParsedReport], design: str, build: str, meta: dict)
     return long
 
 
+def aggregate_metric(grp: pd.DataFrame, metric: str, cols: list[str]) -> pd.DataFrame:
+    """Combine records of one metric per (key, scope) group.
+
+    A report object reported twice keeps its first value (a duplicate-row defect, counted by sanitize);
+    different objects that map to the same FUB (split FUBs, replicated instances) combine according to
+    METRIC_AGG, with apportion weights applied first for merged blocks.
+    """
+    g = grp.copy()
+    obj_cols = [c for c in ("object", "source_file") if c in g.columns]
+    g = g.drop_duplicates(subset=cols + obj_cols, keep="first")
+    w = g["weight"].astype(float) if "weight" in g.columns else pd.Series(1.0, index=g.index)
+    how = METRIC_AGG.get(metric, "first")
+    if how == "sum":
+        g["_v"] = g["value"] * w
+        return g.groupby(cols, dropna=False)["_v"].sum().rename(metric).reset_index()
+    if how == "mean":
+        g["_v"], g["_w"] = g["value"] * w, w
+        agg = g.groupby(cols, dropna=False)[["_v", "_w"]].sum()
+        return (agg["_v"] / agg["_w"].where(agg["_w"] > 0)).rename(metric).reset_index()
+    if how == "min":
+        return g.groupby(cols, dropna=False)["value"].min().rename(metric).reset_index()
+    if how == "max":
+        return g.groupby(cols, dropna=False)["value"].max().rename(metric).reset_index()
+    return g.groupby(cols, dropna=False)["value"].first().rename(metric).reset_index()
+
+
 def join_metric(wide: pd.DataFrame, records: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
-    """Left-join every metric in `records` onto `wide`, honouring each metric's scope (METRIC_SCOPE).
+    """Left-join every metric in `records` onto `wide`, honouring each metric's scope (METRIC_SCOPE)
+    and combining many-to-one / apportioned objects per METRIC_AGG.
 
     `keys` are the object keys (["fub"] for FUB-level records, [] for design-level records that
-    broadcast to every row). Duplicate (key, scope) rows keep the first value; sanitize counts them.
+    broadcast to every row).
     """
     out = wide
     for metric, grp in records.groupby("metric"):
         scope = [k for k in ("workload", "operating_point") if k in METRIC_SCOPE.get(metric, ())]
         cols = keys + scope
         if cols:
-            g = grp.drop_duplicates(subset=cols, keep="first")[cols + ["value"]].rename(columns={"value": metric}).copy()
+            g = grp.copy()
             for k in scope:
                 g[k] = g[k].fillna(DEFAULT_SCOPE_VALUE)
-            out = out.merge(g, on=cols, how="left")
+            out = out.merge(aggregate_metric(g, metric, cols), on=cols, how="left")
         else:
             out = out.assign(**{metric: float(grp["value"].iloc[0])})   # scope-less design-level metric broadcasts
     return out
@@ -268,6 +297,31 @@ def pivot_fub_records(mapped: pd.DataFrame, metrics: tuple[str, ...] = FUB_METRI
     return wide
 
 
+def distribute_module_metrics(wide: pd.DataFrame, mapped: pd.DataFrame, model: ModelRoot) -> pd.DataFrame:
+    """replica_policy = per_instance: FE-side (module-level) metrics are reported once per RTL module but
+    BE-side metrics once per physical instance. Give every instance row its share of the module metrics
+    (extensive ones divided by the instance count, intensive ones copied) and drop the bare module row.
+    """
+    if not model.instances:
+        return wide
+    fe_metrics = set(mapped.loc[mapped["object_kind"] == "fe_hier", "metric"].astype(str)) & set(wide.columns)
+    out = wide.copy()
+    drop = []
+    for base, insts in model.instances.items():
+        n = len(insts)
+        base_rows = out[out["fub"].astype(str) == base]
+        if not len(base_rows) or not n:
+            continue
+        for _, brow in base_rows.iterrows():
+            sel = (out["fub"].astype(str).isin([f"{base}@{i}" for i in insts])) & \
+                  (out["workload"] == brow["workload"]) & (out["operating_point"] == brow["operating_point"])
+            for m in fe_metrics:
+                v = brow[m]
+                out.loc[sel, m] = v / n if METRIC_AGG.get(m) == "sum" else v
+        drop.extend(base_rows.index.tolist())
+    return out.drop(index=drop).reset_index(drop=True)
+
+
 def attach_activity_mode(wide: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFrame:
     """Carry the activity source (vector-based vs vectorless) of the BE power number onto each row."""
     if "activity_mode" not in mapped.columns:
@@ -282,9 +336,12 @@ def attach_activity_mode(wide: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFra
 
 
 def attach_identity(wide: pd.DataFrame, model: ModelRoot) -> pd.DataFrame:
-    """Add model_root / partition from the model root, placed right after fub."""
-    ident = model.to_frame()[["fub", "model_root", "partition"]]
-    out = wide.merge(ident, on="fub", how="left")
+    """Add model_root / partition from the model root, placed right after fub (replica instances get fub@i)."""
+    ident = model.to_frame()[["fub", "model_root", "partition"]].drop_duplicates(subset=["fub"])
+    base = wide["fub"].astype(str).str.split("@", n=1).str[0]
+    inst = wide["fub"].astype(str).str.split("@", n=1).str[1]
+    out = wide.assign(_base=base).merge(ident.rename(columns={"fub": "_base"}), on="_base", how="left").drop(columns="_base")
+    out["model_root"] = out["model_root"].where(inst.isna(), out["model_root"] + "@" + inst.fillna(""))
     cols = [c for c in out.columns if c not in ("model_root", "partition")]
     i = cols.index("fub") + 1
     return out[cols[:i] + ["model_root", "partition"] + cols[i:]]

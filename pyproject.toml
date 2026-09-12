@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "powermet"
-version = "0.7.0"
+version = "0.8.0"
 description = "Power Metrology & Modeling V0: FE <-> BE power correlation, local CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,9 @@ powermet = "powermet.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+powermet = ["profiles/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

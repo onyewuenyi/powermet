@@ -24,6 +24,7 @@ force changes. Those changes should land in adapters and templates, never in the
 | Execution environment | batch schedulers, no local write access, restricted Python | CLI stays argparse and pure Python; `.powermet/` root via `--project-dir` / `POWERMET_HOME`; `ingest plan` / `ingest run --partition-dir` / `ingest merge` fan out through any submitter (`submit_cmd` template) with one writer |
 | Storage | shared catalog, object storage | `catalog.py` schema is plain SQL (SQLite → PostgreSQL); Parquet stays; DuckDB optional |
 | Identity export | model root as a database, a YAML, a tool query | `ModelRoot.from_frame()` from any frame; `identity.py` is the only matching code |
+| FE/BE relationship | same hierarchy, explicit map, replicated units, merged blocks, split FUBs, renamed instances | `IdentityStrategy` + map shape; `powermet profiles list`; see `docs/methodology-variants.md` |
 | Unit of analysis | FUB (CPU) → unit, SM, cluster, PE, tile (GPU / accelerator) | the schema column is still `fub`; `model_root` carries the real name; labels are one dict |
 | Workloads | vectors / traces (CPU) → kernels, layers, graphs (accelerator) | `workload` is a free string; traces drive `integrate trace` |
 | Data-movement emphasis | far larger on accelerators (NoC, SRAM, HBM traffic) | `move_term` and the datamove model are the extension point; add terms as `ModelSpec` features |

@@ -397,14 +397,16 @@ def cmd_mock_generate(args: argparse.Namespace) -> int:
     from powermet.mockdata import write_mock_runs
 
     spec = DemoSpec(n_designs=args.designs, n_builds=args.builds, n_fubs=args.fubs, seed=args.seed,
-                    workloads=tuple(args.workloads.split(",")), operating_points=tuple(args.operating_points.split(",")))
+                    workloads=tuple(args.workloads.split(",")), operating_points=tuple(args.operating_points.split(",")),
+                    methodology=args.methodology)
     root, data, log = write_mock_runs(args.output_dir, spec, defects=not args.no_defects)
     n_runs = spec.n_designs * spec.n_builds
     print(f"Wrote {n_runs} mock run directories under {root}")
     print(f"  {spec.n_designs} designs x {spec.n_builds} builds x {spec.n_fubs} FUBs x "
           f"{len(spec.workloads)} workloads x {len(spec.operating_points)} operating points "
           f"= {len(data.measurements):,} expected measurements")
-    print("  sources per run: metadata.json, mapping/fub_map.csv, pprtl/, primepower/, starrc/, implementation/, activity/, perf/")
+    print("  sources per run: metadata.json, mapping/fub_map.csv, pprtl/, primepower/, primetime/, starrc/, implementation/, activity/, perf/, voltus/, intent/")
+    print(f"  back-end methodology: {spec.methodology}" + ("  (ingest with the matching profile: powermet init --profile same_hierarchy)" if spec.methodology == "same_hierarchy" else ""))
     if log:
         print(f"  injected defects ({len(log)}):")
         for line in log:
@@ -625,6 +627,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     cfg = Config()
     if args.submit_cmd:
         cfg.submit_cmd = args.submit_cmd
+    if args.profile:
+        from powermet.profiles import load_profile
+        try:
+            load_profile(args.profile).apply(cfg)
+        except FileNotFoundError as exc:
+            raise CliError(str(exc))
     project.init(cfg)
     templates = Path(__file__).resolve().parents[2] / "templates"
     dest = Path(args.dir)
@@ -650,6 +658,56 @@ def cmd_init(args: argparse.Namespace) -> int:
     print()
     print("Next: export the model root to a fub_map.csv per run, place metadata.json in each run directory,")
     print("      run `powermet sources` to compare adapters with the tools in use, then `powermet ingest scan <root>`.")
+    return 0
+
+
+def cmd_techniques_list(args: argparse.Namespace) -> int:
+    from powermet.techniques import render_catalog
+
+    print(render_catalog())
+    return 0
+
+
+def cmd_techniques_assess(args: argparse.Namespace) -> int:
+    from powermet.techniques import assess_all, render_results
+
+    project, cfg, df = _load(args)
+    ctx = {"design": args.design, "workload": args.workload, "operating_point": args.operating_point,
+           "idle_duty": args.idle_duty, "wire_cap_cut_pct": args.wire_cap_cut_pct}
+    try:
+        from powermet.decomposition import decompose
+        from powermet.modeling import load
+        payload, meta = load(project)
+        if "datamove" in payload["models"]:
+            ctx["decomposition"] = decompose(df, payload["models"]["datamove"])
+    except Exception:
+        pass
+    results = assess_all(df, ctx, args.technique)
+    print(render_results(results, top=args.top))
+    return 0
+
+
+def cmd_profiles_list(args: argparse.Namespace) -> int:
+    from powermet.profiles import list_profiles, load_profile
+    from powermet.textfmt import table
+
+    rows = []
+    for n in list_profiles():
+        pr = load_profile(n)
+        rows.append([n, pr.title, pr.identity.get("kind", ""), pr.identity.get("replica_policy", ""), pr.activity.get("hierarchy", "")])
+    print(table(["Profile", "Setup", "Identity", "Replicas", "Activity hier"], rows, ["l"] * 5))
+    print()
+    print("powermet profiles show <name> for the setup, problem, implication and config; powermet init --profile <name> to apply.")
+    return 0
+
+
+def cmd_profiles_show(args: argparse.Namespace) -> int:
+    from powermet.profiles import load_profile, render_profile
+
+    try:
+        print(render_profile(load_profile(args.name)))
+    except FileNotFoundError as exc:
+        raise CliError(str(exc))
     return 0
 
 
@@ -1173,6 +1231,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--workloads", default="idle,typical,compute,memory")
     g.add_argument("--operating-points", default="eco,nom,turbo")
     g.add_argument("--no-defects", action="store_true", help="Do not inject data-quality defects.")
+    g.add_argument("--methodology", default="separate", choices=["separate", "same_hierarchy", "replicated", "merged", "split", "mixed"],
+                   help="How the back-end hierarchy relates to FUBs in the generated reports and FUB map.")
     g.set_defaults(func=cmd_mock_generate)
 
     sp = sub.add_parser("ingest", help="Automated extraction from EDA run directories.")
@@ -1218,8 +1278,33 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--design", default=None)
     sp.add_argument("--design-type", default=None, help="cpu | gpu | asic | ai_accelerator | soc")
     sp.add_argument("--submit-cmd", default=None, help='Scheduler template, e.g. "bsub -M 4G -J pm-{design}-{build} {cmd}"')
+    sp.add_argument("--profile", default=None, help="Methodology profile to apply (see `powermet profiles list`).")
     sp.add_argument("--force", action="store_true", help="Overwrite existing template copies.")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("techniques", help="Power-optimization techniques: what they solve, trade-offs, and where they apply in this dataset.")
+    tq = sp.add_subparsers(dest="techniques_command", metavar="<subcommand>")
+    tq.required = True
+    t1 = tq.add_parser("list", help="Catalog: problem, mechanism, trade-off, considerations, data needed.")
+    t1.set_defaults(func=cmd_techniques_list)
+    t2 = tq.add_parser("assess", help="Rank candidate FUBs and estimate savings per technique (assumptions stated).")
+    t2.add_argument("--technique", action="append", help="Limit to these keys (repeatable).")
+    t2.add_argument("--design", default=None)
+    t2.add_argument("--workload", default=None)
+    t2.add_argument("--operating-point", default=None)
+    t2.add_argument("--idle-duty", type=float, default=0.5, help="Fraction of time gated blocks are off (power gating).")
+    t2.add_argument("--wire-cap-cut-pct", type=float, default=10.0, help="Assumed wire-cap reduction from P&R work.")
+    t2.add_argument("--top", type=int, default=5)
+    t2.set_defaults(func=cmd_techniques_assess)
+
+    sp = sub.add_parser("profiles", help="Methodology profiles: how FE/BE hierarchies and activity relate at a company.")
+    pf_ = sp.add_subparsers(dest="profiles_command", metavar="<subcommand>")
+    pf_.required = True
+    pl = pf_.add_parser("list", help="List built-in profiles.")
+    pl.set_defaults(func=cmd_profiles_list)
+    ps_ = pf_.add_parser("show", help="Setup, problem, implication and config of one profile.")
+    ps_.add_argument("name")
+    ps_.set_defaults(func=cmd_profiles_show)
 
     sp = sub.add_parser("sources", help="List source adapters: tool family, versions, patterns, metrics.")
     sp.set_defaults(func=cmd_sources)

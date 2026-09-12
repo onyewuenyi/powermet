@@ -1,0 +1,18 @@
+name = "separate_hierarchies"
+title = "Separate FE and BE hierarchies with an explicit map"
+setup = """
+RTL (FE) and physical (BE) hierarchies differ: the back end re-partitions into physical blocks, renames or
+uniquifies instances, and the FUB is an analytical grouping the design team owns. A map (the model root
+export) relates every FUB to its FE path, synthesis object, BE path and partition.
+"""
+problem = "Nothing in the reports says which BE instance is which FUB; mapping is the core problem and the first deliverable."
+implication = "Every unmapped BE object is missing power; coverage must be reported with every total (budget INCOMPLETE)."
+[identity]
+kind = "explicit_map"
+replica_policy = "sum"
+merge_basis = "share"
+name_rules = [["_(?:phys|r\\d+)$", ""]]
+[activity]
+hierarchy = "be"
+[notes]
+timing = "partition-level PrimeTime, inherited by FUBs through the map"

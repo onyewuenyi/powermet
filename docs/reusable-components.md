@@ -8,7 +8,9 @@ lists the powermet modules it imports; anything not listed is standalone apart f
 | **Source adapter contract** | `extract/base.py` | `SourceInputs`, `Located`, `ParsedReport`, `record()`, `convert_unit()` with the canonical-unit table, `locate()` with `{workload}`/`{operating_point}` patterns and per-source overrides, `parse_header()` / `find_table_start()` / `to_float()` text helpers, `OBJECT_KINDS`, `tool_name()` policy | – | `test_extract_units.py` (base helpers, locate overrides, record/kind validation) |
 | Adapters | `extract/{pprtl,primepower,primetime,starrc,implementation,saif,perf,metadata}.py` | One `get_files()` + `parse()` per tool; representative formats, a real SAIF 2.0 parser (per-instance activity, bits switched/cycle), unit normalisation, header-driven run id / build / scenario | `extract/base.py` | `test_extract_units.py` (literal report strings per adapter, unit variants, error paths); `test_extract_pipeline.py` (mock round-trip) |
 | Source and metric registry | `extract/__init__.py` | `SOURCE_SPECS` (`SourceSpec` per adapter: stage, tool family, versions, pattern, optional, metrics, built from module attributes), `STAGE_OF_SOURCE`, `SOURCE_METRICS`, `METRIC_SCOPE` (which keys a metric varies by), `metrics_with_scope()` | adapters | `test_extract_units.py::test_registry_consistency` |
-| **Design identity** | `identity.py` | `ModelRoot` / `FubSpec`: FUB list, `model_root`, FUB → partition, FE/BE hierarchy, `resolve(obj, kind)`; the only place object names are matched | – | `test_identity_selection.py::TestModelRoot` |
+| **Design identity** | `identity.py` | `ModelRoot` / `FubSpec` / `MapEntry`: FUB list, `model_root`, FUB → partition, FE/BE hierarchy; `IdentityStrategy` (same hierarchy vs explicit map, replica policy, merge basis, `NameRules`); `resolve(obj, kind)` returns weighted `Match`es for split, merged and replicated FUBs; the only place object names are matched | – | `test_identity_selection.py`, `test_methodologies.py` |
+| Methodology profiles | `profiles.py`, `profiles/*.toml` | documented presets (setup, problem, implication, config) applied by `init --profile` | `config` | `test_methodologies.py::test_profiles_apply_and_render` |
+| Techniques registry | `techniques.py` | `Technique` (problem, mechanism, trade-off, considerations, data needed, `assess()`), `assess_all()`, catalogue and result rendering | `selection`, `schema` | `test_methodologies.py::test_techniques_catalog_and_assessment` |
 | Lineage | `lineage.py` | `resolve_objects()` (records → FUB incl. partition fan-out), `lineage_table()` with issue codes, `render_chain()` | `identity`, `extract/base` | `test_pipeline_units.py`, `test_timing_energy.py::test_primetime_parser_and_partition_fanout` |
 | **Measurement accessor** | `measurements.py` | `Measurement` (atomic record with provenance), `MeasurementStore.get(fub=, build=, stage=, metric=)`, `find()`, `pivot()`, `get_measurement(project, ...)` | `storage` (only for `from_project`) | `test_identity_selection.py::TestMeasurementStore`; CLI `measure get` in `test_cli.py` |
 | Dataset selection | `selection.py` | `DatasetSlice` (latest build / default workload & operating point / design / FUB), `build_order()`, `latest_build[_per_design]()`, `default_value()` | – | `test_identity_selection.py::TestSelection` |
@@ -47,7 +49,10 @@ tool versions, operating points, `design_type`, activity-flow provenance), `fub_
   provenance is attached once in `_normalize`; the wide table is a pivot governed by `METRIC_SCOPE`.
   New sources never touch the pivot.
 - **Identity from the model root, not from name heuristics.** `ModelRoot.resolve(obj, kind)` is the single
-  matching function; partition-level data fans out to member FUBs there.
+  matching function; partition-level data fans out to member FUBs there, and the FE/BE relationship
+  (one-to-one, split, merged, replicated) is a strategy plus map shape, never code in the pipeline.
+- **Aggregation by metric nature.** `METRIC_AGG` says whether a metric adds, averages or takes the worst
+  value when several objects map to one FUB; the pivot applies apportion weights first.
 - **Checks as a registry.** `sanitize.CHECKS` maps a code to (label, blocks-usability). Adding a check =
   one `mark()` call and one dict entry; the report, the flags column and the usable mask follow.
 - **Models as a registry.** `MODEL_REGISTRY` drives what is trained, what the CLI accepts and what is

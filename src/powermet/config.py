@@ -36,6 +36,10 @@ class Config:
     top_n_errors: int = 10
     # V1 extraction
     fub_map_pattern: str = "mapping/fub_map.csv"
+    # identity strategy: how FE/BE report object names map to FUBs (see identity.IdentityStrategy, docs/methodology-variants.md)
+    identity: dict = field(default_factory=lambda: {"kind": "explicit_map", "replica_policy": "sum", "merge_basis": "share",
+                                                    "name_rules": [], "divider": "/", "lowercase": False, "strip_top": False})
+    profile: str = ""                    # methodology profile the config was initialised from (informational)
     source_patterns: dict[str, str] = field(default_factory=dict)   # per-source override of DEFAULT_PATTERN
     disabled_sources: list[str] = field(default_factory=list)
     strict_consistency: bool = True     # drop reports whose run id / build disagree with metadata.json

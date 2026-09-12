@@ -1,0 +1,19 @@
+name = "rtl_activity_only"
+title = "Activity only at RTL hierarchy (no FSDB -> physical SAIF flow)"
+setup = """
+The only activity data is an RTL-level SAIF/FSDB per workload; there is no flow that re-hierarchises it
+onto the physical netlist. Signoff tools map it with read_saif -map_names / -strip_path, and powermet
+must map the same names.
+"""
+problem = "RTL instance names (with generate blocks, escaped identifiers, retimed registers) differ from BE names; toggle counts can also be missing for logic synthesis created."
+implication = "Set activity_flow.hierarchy = 'fe' so SAIF objects resolve through fe_hier, and use name_rules to normalise escapes, dividers and uniquify suffixes. Expect lower activity coverage and check metric_quality for it."
+[identity]
+kind = "explicit_map"
+replica_policy = "sum"
+merge_basis = "share"
+name_rules = [["\\\\", ""], ["\\.", "/"], ["_(?:phys|r\\d+)$", ""], ["_\\d+$", ""]]
+lowercase = true
+[activity]
+hierarchy = "fe"
+[notes]
+signoff = "read_saif -map_names on the tool side; the same rules here keep provenance consistent"

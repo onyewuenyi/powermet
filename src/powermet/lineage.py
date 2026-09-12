@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from powermet.extract.base import BE_HIER, DESIGN, FE_HIER, PARTITION
-from powermet.identity import FUB_MAP_COLUMNS, ModelRoot
+from powermet.identity import ModelRoot
 
 LINEAGE_LEVELS = ("model_root", "fub", "fe_hier", "synth_object", "be_hier", "partition", "physical_instances", "measurement")
 DESIGN_FUB = "*"      # sentinel fub value for design-level records
@@ -53,23 +53,33 @@ def resolve_objects(records: pd.DataFrame, model: ModelRoot) -> tuple[pd.DataFra
     """
     rec = records.copy()
     fubs: list[list[str]] = []
+    weights: list[list[float]] = []
+    instances: list[list[str | None]] = []
     aggregate: list[bool] = []
     for obj, kind in zip(rec["object"].astype(str), rec["object_kind"].astype(str)):
         agg = False
         if kind == DESIGN:
-            hit = [DESIGN_FUB]
+            hit, w, inst = [DESIGN_FUB], [1.0], [None]
         elif kind in (FE_HIER, BE_HIER, PARTITION):
-            hit = [f.fub for f in model.resolve(obj, kind)]
+            ms = model.resolve(obj, kind)
+            hit = [m.spec.fub + (f"@{m.instance}" if m.instance else "") for m in ms]
+            w = [m.weight for m in ms]
+            inst = [m.instance for m in ms]
             agg = not hit and kind in (FE_HIER, BE_HIER) and model.is_ancestor(obj)
         else:
-            hit = []
+            hit, w, inst = [], [], []
         fubs.append(hit)
+        weights.append(w)
+        instances.append(inst)
         aggregate.append(agg)
     rec["fub"] = fubs
+    rec["weight"] = weights
+    rec["instance"] = instances
     rec["_aggregate"] = aggregate
     n = rec["fub"].str.len()
-    unmapped = rec[(n == 0) & ~rec["_aggregate"]].drop(columns=["fub", "_aggregate"]).assign(fub=None)
-    mapped = rec[n > 0].drop(columns=["_aggregate"]).explode("fub").reset_index(drop=True)
+    unmapped = rec[(n == 0) & ~rec["_aggregate"]].drop(columns=["fub", "weight", "instance", "_aggregate"]).assign(fub=None)
+    mapped = rec[n > 0].drop(columns=["_aggregate"]).explode(["fub", "weight", "instance"]).reset_index(drop=True)
+    mapped["weight"] = mapped["weight"].astype(float)
     return mapped, unmapped
 
 
@@ -80,10 +90,18 @@ def lineage_table(mapped: pd.DataFrame, model: ModelRoot, design: str, build: st
     pres = fub_rec.groupby(["fub", "metric"]).size().unstack(fill_value=0) if len(fub_rec) else pd.DataFrame()
     src_of = (fub_rec.groupby(["fub", "metric"])["source"].first().unstack()
               if "source" in fub_rec.columns and len(fub_rec) else pd.DataFrame())
-    inst = fub_rec[fub_rec["metric"] == "cell_count"].groupby("fub")["value"].first() if len(fub_rec) else pd.Series(dtype=float)
+    inst_count = fub_rec[fub_rec["metric"] == "cell_count"].groupby("fub")["value"].sum() if len(fub_rec) else pd.Series(dtype=float)
     rows, flags = [], []
+    rel = model.relationships()
+    specs = []
     for spec in model:
-        f = spec.fub
+        insts = sorted(model.instances.get(spec.fub, ()))
+        if insts:
+            for i in insts:
+                specs.append((f"{spec.fub}@{i}", spec, i))
+        else:
+            specs.append((spec.fub, spec, None))
+    for f, spec, inst in specs:
         have = set(pres.columns[pres.loc[f] > 0]) if len(pres) and f in pres.index else set()
         issues = []
         if not (set(FE_METRICS) & have):
@@ -96,15 +114,21 @@ def lineage_table(mapped: pd.DataFrame, model: ModelRoot, design: str, build: st
             issues.append(NO_PARTITION)
         elif has_timing_source and "wns_ps" not in have:
             issues.append(TIMING_MISSING)
+        row = spec.as_row()
+        row["fub"] = f
+        if inst is not None:
+            row["model_root"] = f"{spec.model_root}@{inst}"
+        row["relationship"] = ";".join(k for k, v in rel.items() if spec.fub in v) or ("replicated" if inst else "one-to-one")
         rows.append({
-            "design": design, "build": build, **spec.as_row(),
-            "physical_instances": float(inst.get(f, float("nan"))),
+            "design": design, "build": build, **row,
+            "physical_instances": float(inst_count.get(f, float("nan"))),
             "metrics_present": ",".join(sorted(have)),
             "sources": ",".join(f"{k}:{v}" for k, v in (src_of.loc[f].dropna().items() if len(src_of) and f in src_of.index else [])),
             "lineage_ok": not issues, "lineage_issues": ";".join(issues),
         })
         flags.extend(f"{f}: {i}" for i in issues)
-    cols = ["design", "build", *FUB_MAP_COLUMNS, "physical_instances", "metrics_present", "sources", "lineage_ok", "lineage_issues"]
+    cols = ["design", "build", "fub", "model_root", "partition", "fe_hier", "synth_object", "be_hier", "relationship",
+            "physical_instances", "metrics_present", "sources", "lineage_ok", "lineage_issues"]
     return pd.DataFrame(rows, columns=cols), flags
 
 
@@ -134,6 +158,7 @@ def render_chain(row: pd.Series, measurements: pd.DataFrame | None = None) -> st
         f"  |-- synthesis object  {row['synth_object']}",
         f"  |-- BE hierarchy      {row['be_hier']}",
         f"  |-- partition         {row.get('partition') or 'unknown'}   (timing is a partition attribute)",
+        f"  |-- relationship      {row.get('relationship', 'one-to-one')}",
         f"  |-- physical instances {inst_s}",
     ]
     if row.get("sources"):
