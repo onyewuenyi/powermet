@@ -52,6 +52,7 @@ class Config:
     # V1 sanitization
     stale_days: int = 120
     near_zero_mw: float = 0.01
+    leakage_workload_tol_pct: float = 5.0   # leakage should not depend on the workload; larger spread per FUB/op flags a component mismatch
     unit_magnitude_ratio: float = 50.0
     use_sanitized: bool = True
 

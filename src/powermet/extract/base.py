@@ -48,7 +48,7 @@ CANONICAL_UNITS = {
     "frequency_ghz": "GHz", "voltage_v": "V", "activity": "ratio",
     "ipc": "ops/cycle", "throughput_gops": "Gops/s",
     "wire_length_um": "um", "avg_net_length_um": "um", "bits_per_cycle": "bits", "net_count": "count",
-    "be_voltus_mw": "mW", "cg_efficiency": "ratio",
+    "be_voltus_mw": "mW", "cg_efficiency": "ratio", "be_leakage_mw": "mW", "fe_leakage_mw": "mW",
     "clock_period_ps": "ps", "wns_ps": "ps", "tns_ps": "ps", "violating_endpoints": "count",
 }
 

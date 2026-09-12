@@ -34,8 +34,12 @@ class ImportResult:
 def add_analysis_features(df: pd.DataFrame) -> pd.DataFrame:
     """Derived physical features used by analysis/models (see powermet.features)."""
     from powermet.features import add_engineered_features
+    from powermet.metrics import add_convergence_metrics
 
-    return add_engineered_features(df)
+    out = add_engineered_features(df)
+    if "cdyn_pf" not in out.columns:            # datasets ingested before the convergence metrics existed
+        add_convergence_metrics(out)
+    return out
 
 
 def import_file(project: Project, source: str | Path, config: Config | None = None,

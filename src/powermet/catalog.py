@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS model (
 CREATE TABLE IF NOT EXISTS budget_status (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     checked_at TEXT, design TEXT, scope TEXT, workload TEXT, operating_point TEXT, build TEXT, milestone TEXT,
-    budget_mw REAL, actual_mw REAL, tolerance_pct REAL, margin_pct REAL, status TEXT
+    budget_mw REAL, actual_mw REAL, tolerance_pct REAL, margin_pct REAL, status TEXT, metric TEXT
 );
 CREATE TABLE IF NOT EXISTS profile_run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,11 +128,14 @@ def record_model(project, meta: dict, best: str) -> None:
 
 def record_budgets(project, statuses) -> None:
     with connect(project) as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(budget_status)")]
+        if "metric" not in cols:                            # migrate catalogs created before convergence metrics existed
+            con.execute("ALTER TABLE budget_status ADD COLUMN metric TEXT")
         con.executemany(
             "INSERT INTO budget_status (checked_at, design, scope, workload, operating_point, build, milestone, budget_mw, actual_mw, "
-            "tolerance_pct, margin_pct, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "tolerance_pct, margin_pct, status, metric) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(_now(), s.budget.design, s.budget.scope, s.budget.workload, s.budget.operating_point, s.build, s.milestone,
-              s.budget.be_mw, s.actual_mw, s.tolerance_pct, s.margin_pct, s.status) for s in statuses])
+              s.budget.target, s.actual, s.tolerance_pct, s.margin_pct, s.status, s.budget.metric) for s in statuses])
 
 
 def record_profile(project, d: dict) -> None:

@@ -18,12 +18,12 @@ from powermet.extract import SOURCE_METRICS
 from powermet.extract.base import CANONICAL_UNITS
 from powermet.ingest import write_table
 from powermet.lineage import BLOCKING_ISSUES, PHYSICAL_REQUIRED, TIMING_ISSUES
-from powermet.schema import KEY_COLUMNS, NON_NEGATIVE_COLUMNS, POWER_COLUMNS
+from powermet.schema import KEY_COLUMNS, NON_NEGATIVE_COLUMNS, REQUIRED_POWER_COLUMNS
 from powermet.storage import load_dataset, load_table, register_views, sanitized_path
 from powermet.textfmt import fmt_int, fmt_pct
 from powermet.validation import outlier_masks
 
-REQUIRED_METRICS = POWER_COLUMNS
+REQUIRED_METRICS = REQUIRED_POWER_COLUMNS
 PHYSICAL_METRICS = PHYSICAL_REQUIRED
 
 # check -> (label, blocks usability?)
@@ -45,6 +45,7 @@ CHECKS: dict[str, tuple[str, bool]] = {
     "intent_missing": ("No UPF power domain for FUB", False),
     "intent_mismatch": ("UPF voltage != operating point voltage", False),
     "unmapped_objects": ("Unmapped report objects", False),
+    "leakage_suspect": ("Leakage > total or varies with workload (component mismatch)", False),
 }
 BLOCKING_LINEAGE = BLOCKING_ISSUES
 TIMING_LINEAGE = TIMING_ISSUES
@@ -148,6 +149,21 @@ def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, li
                 neg_cols.append(f"{c}: {int(m.sum())} rows")
             neg |= m
     mark("negative", neg, neg_cols)
+
+    # 4b leakage component sanity: leakage above the total, or leakage that changes with the workload at a fixed
+    #    operating point, means the components were read from different scenarios or columns (the convergence
+    #    metrics CdynTot / LkgPwr depend on this split). A high leakage share by itself is legitimate at idle.
+    if "be_leakage_mw" in df.columns:
+        lk = pd.to_numeric(df["be_leakage_mw"], errors="coerce")
+        bad = np.array((lk > num["be_mw"] * 1.001).fillna(False).to_numpy(), dtype=bool)   # writable copy
+        gk = [c for c in ("design", "build", "fub", "operating_point") if c in df.columns]
+        if gk and "workload" in df.columns:
+            g = lk.groupby([df[c] for c in gk])
+            spread = (g.transform("max") - g.transform("min")) / g.transform("mean").where(lambda s: s > 0)
+            bad |= (spread * 100 > cfg.leakage_workload_tol_pct).fillna(False).to_numpy()
+        mark("leakage_suspect", bad)
+    else:
+        mark("leakage_suspect", np.zeros(n, dtype=bool))
 
     # 5 near-zero denominators
     mark("near_zero_be", (num["be_mw"].abs() < cfg.near_zero_mw).fillna(False).to_numpy())

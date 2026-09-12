@@ -1027,6 +1027,52 @@ def cmd_budget_check(args: argparse.Namespace) -> int:
     return 0 if not any(s_.status == "OVER" for s_ in statuses) or not args.strict else 1
 
 
+def _find_budgets_file(args, cfg, project):
+    from pathlib import Path
+
+    candidates = [Path(args.file)] if args.file else [Path(cfg.budgets_file), project.root / "budgets.toml",
+                                                       *sorted(Path.cwd().glob("*/budgets.toml"))]
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
+        raise CliError("budgets file not found; pass --file or put budgets.toml in the working or project directory "
+                       "(see templates/budgets.template.toml)")
+    return path
+
+
+def cmd_converge(args: argparse.Namespace) -> int:
+    from powermet.budgets import load_budgets
+    from powermet.catalog import record_budgets
+    from powermet.convergence import converge, plan, render_convergence, render_plan
+    from powermet.storage import load_dataset, load_table
+
+    project, cfg, df = _load(args)
+    raw = load_dataset(project, cfg, raw=True)          # targets sum every measured FUB, flagged or not
+    path = _find_budgets_file(args, cfg, project)
+    print(f"Targets: {path}")
+    print()
+    budgets = load_budgets(path)
+    if args.design:
+        budgets = [b for b in budgets if b.design == args.design]
+    if args.metric:
+        budgets = [b for b in budgets if b.metric == args.metric]
+    items = converge(raw, budgets, lineage=load_table(project, "lineage"))
+    print(render_convergence(items))
+    record_budgets(project, [c.status for c in items])
+    if args.plan:
+        ctx = {"idle_duty": args.idle_duty, "wire_cap_cut_pct": args.wire_cap_cut_pct}
+        cache: dict = {}
+        for c in items:
+            if c.gap <= 0:
+                continue
+            key = (c.budget.design, c.budget.workload, c.budget.operating_point)
+            if key not in cache:
+                from powermet.techniques import assess_all
+                cache[key] = assess_all(df, {**ctx, "design": key[0], "workload": key[1], "operating_point": key[2]})
+            print()
+            print(render_plan(plan(df, c, cache[key], ctx), top=args.top))
+    return 0 if not any(c.verdict == "DIVERGING" for c in items) or not args.strict else 1
+
+
 def cmd_analyze_hotspots(args: argparse.Namespace) -> int:
     from powermet.hotspots import hotspots, render_hotspots
     from powermet.textfmt import heading
@@ -1318,6 +1364,17 @@ def build_parser() -> argparse.ArgumentParser:
     b1.add_argument("--history", action="store_true", help="Also print every build for each budget.")
     b1.add_argument("--strict", action="store_true", help="Exit 1 when any budget is OVER.")
     b1.set_defaults(func=cmd_budget_check)
+
+    sp = sub.add_parser("converge", help="Power convergence: CdynTot / LkgPwr / total targets vs the latest build, trend, projection, closure plan.")
+    sp.add_argument("--file", default=None, help="targets TOML (same file as budgets; entries carry metric = cdyn_pf | be_leakage_mw | be_mw)")
+    sp.add_argument("--design", default=None)
+    sp.add_argument("--metric", default=None, help="only targets on this metric")
+    sp.add_argument("--plan", action="store_true", help="Rank techniques by the share of each open gap they cover.")
+    sp.add_argument("--top", type=int, default=6)
+    sp.add_argument("--idle-duty", type=float, default=0.5, help="fraction of time blocks are off (power gating)")
+    sp.add_argument("--wire-cap-cut-pct", type=float, default=10.0, help="wire cap removed by placement / routing work")
+    sp.add_argument("--strict", action="store_true", help="Exit 1 when any target is DIVERGING.")
+    sp.set_defaults(func=cmd_converge)
 
     sp = sub.add_parser("qualify", help="Compare two estimates of the same quantity (engine vs engine, version vs version).")
     sp.add_argument("--a", required=True, help="reference column, e.g. be_mw")

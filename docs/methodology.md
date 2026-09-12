@@ -265,6 +265,55 @@ and the per-partition timing model. `integrate trace` walks a phase trace (workl
 or (f, V), activity scale, duration) and reports power, throughput, energy, pJ/op and timing
 feasibility per phase and in total. `powermet.integrate.CompactPowerModel` is the reference evaluator.
 
+## Power convergence: CdynTot and LkgPwr
+
+Everything upstream exists to answer one program question: will this design hit its power target at each
+milestone, and if not, what closes the gap? The target is rarely one total-power number. Programs sign up to
+two design-owned quantities:
+
+| Target | Column | Definition | Why it is the target |
+|---|---|---|---|
+| **CdynTot** | `cdyn_pf` | (BE power − leakage) / (V² · f), summed over the scope; mW / (V² · GHz) is pF exactly | Dynamic power with the corner divided out. RTL and physical changes move Cdyn; voltage and frequency do not. So it compares FE to BE, build to build and corner to corner, and a what-if on the corner cannot hide a design regression. |
+| **LkgPwr** | `be_leakage_mw` | signoff leakage at the target corner, summed over the scope | Different levers (Vt mix, power gating, area, memory sleep) and different sensitivity (∝ V³, temperature, process) from dynamic power. A total-power target lets one component hide the other. |
+| total | `be_mw` | BE power at the target workload and corner | The product number; kept as a target too, but it is the sum of the two above at one corner. |
+
+**Where the split comes from.** The PrimePower hierarchy report carries internal, switching and leakage
+columns; the adapter keeps the total as `be_mw` and the leakage as `be_leakage_mw`, and notes rows whose
+components do not add up. PPRTL physical-aware reports give `fe_leakage_mw`, so an FE CdynTot
+(`fe_cdyn_pf`) exists as soon as RTL power runs. `sanitize` flags leakage above the total and leakage that
+changes with the workload at a fixed corner (a component read from the wrong scenario), because both
+convergence metrics depend on this split being right.
+
+**How targets are stated.** `budgets.toml` entries carry `metric` (`be_mw`, `cdyn_pf`, `be_leakage_mw`,
+`be_dynamic_mw`), a `target` in that metric's unit, a scope (design, partition, FUB, model root), the
+workload and operating point, and a tolerance per milestone. Targets are checked against the raw dataset
+so a FUB excluded from correlation still counts, and FUB coverage is reported so an undercounted scope reads
+INCOMPLETE instead of on track.
+
+**What `converge` adds to a budget check.** For every target: the gap in the metric's unit, the reduction
+of the actual needed to reach it, the trend across builds and a projection (builds to target at the current
+trend), and a verdict: CONVERGED (under target), CONVERGING (over, trending down), FLAT, DIVERGING. Status
+applies the milestone tolerance; the verdict looks at the trajectory toward the target itself, so a build
+that is inside tolerance but trending up is still called out.
+
+**Closure plan.** `converge --plan` takes the technique assessments and keeps only those that move the
+target's component: a CdynTot gap is answered with dynamic levers (clock gating, wire-cap reduction,
+operand isolation, glitch reduction), a LkgPwr gap with leakage levers (Vt swap, power gating, memory sleep),
+and a corner change (DVFS) is never counted against a target stated at a fixed corner. Dynamic savings in mW
+convert to pF by dividing out V²f at the target's corner. Techniques are ranked by the share of the gap each
+covers, with the cumulative total and the remainder that no assessable technique reaches, which is the
+honest signal that the gap needs an architectural change, a renegotiated target or data the pipeline lacks.
+Every line is an order-of-magnitude estimate under the technique's stated assumptions, to be confirmed with
+a what-if and the next build.
+
+**Trade-offs and considerations.** Cdyn assumes the reported power is dominated by CV²f switching at the
+reported corner; short-circuit and glitch power fold into it, which is fine for tracking but means Cdyn is
+not a pure capacitance. Leakage at one corner does not predict leakage at another without a leakage model
+(∝ V³ in the demo, temperature and process in reality); track LkgPwr at the corner the target names.
+Apportioned FUBs (merged blocks) carry the apportion assumption into both metrics; block-level targets are
+exact, FUB-level ones are estimates. The techniques' savings overlap (clock gating and operand isolation
+compete for the same registers), so a cumulative that covers the gap on paper is an upper bound.
+
 ## Metadata catalog
 
 `metrology.db` (SQLite) records builds, every parsed source file with SHA-256, tool and version,

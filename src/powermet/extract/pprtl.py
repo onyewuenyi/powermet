@@ -15,6 +15,7 @@ Representative format (one file per workload x operating point; Mode header sele
     gpu_a_top/u_scheduler          40.123      35.111     5.223   80.457    0.82
 
 ClockGatingEff (optional) is the fraction of register clock pins gated, emitted as `cg_efficiency`.
+The Leakage column of the physical-aware report is emitted as `fe_leakage_mw` (FE estimate of LkgPwr).
 """
 
 from __future__ import annotations
@@ -57,6 +58,10 @@ def parse(path: Path, **context) -> ParsedReport:
         val, cu = convert_unit(to_float(parts[4]), unit, metric)          # columns: hier, int, sw, leak, total[, cg]
         rows.append({"object": parts[0], "object_kind": OBJECT_KIND, "metric": metric,
                      "value": val, "unit": cu, "unit_original": unit})
+        if metric == "fe_physical_mw":
+            lval, _ = convert_unit(to_float(parts[3]), unit, "fe_leakage_mw")
+            rows.append({"object": parts[0], "object_kind": OBJECT_KIND, "metric": "fe_leakage_mw",
+                         "value": lval, "unit": cu, "unit_original": unit})
         if has_cg and len(parts) >= 6 and metric == "fe_physical_mw":
             rows.append({"object": parts[0], "object_kind": OBJECT_KIND, "metric": "cg_efficiency",
                          "value": to_float(parts[5]), "unit": "ratio", "unit_original": "ratio"})

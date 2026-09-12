@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from powermet.deps import available
-from powermet.schema import FEATURE_COLUMNS, POWER_COLUMNS, label
+from powermet.schema import FEATURE_COLUMNS, FE_ESTIMATE_COLUMNS, label
 from powermet.textfmt import fmt_r, table
 
 ANALYSIS_FEATURES = tuple(FEATURE_COLUMNS) + ("wire_cap_fraction",)
@@ -64,7 +64,7 @@ def correlation_matrix(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 def be_correlations(df: pd.DataFrame) -> list[Association]:
-    cands = [c for c in POWER_COLUMNS if c != "be_mw"] + list(ANALYSIS_FEATURES)
+    cands = list(FE_ESTIMATE_COLUMNS) + list(ANALYSIS_FEATURES)
     return associations(df, "be_mw", cands)
 
 

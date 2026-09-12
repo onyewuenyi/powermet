@@ -64,12 +64,16 @@ def test_primepower_units_and_paths(mock_root):
         run = root / design / "B001"
         rep = SOURCES["primepower"].parse(run / "primepower" / "typical_nom" / "power_hier.rpt")
         rec = rep.records
+        assert set(rec["metric"]) == {"be_mw", "be_leakage_mw"}          # total and the leakage component
+        leak = rec[rec["metric"] == "be_leakage_mw"].set_index("object")["value"]
+        rec = rec[rec["metric"] == "be_mw"]
         assert rec["object"].str.startswith(design.lower() + "_top/").all()
         gen = data.measurements.query("design == @design and build == 'B001' and workload == 'typical' and operating_point == 'nom'")
         hier = data.hierarchy[data.hierarchy.design == design].set_index("fub")["be_hier"]
         merged = gen.assign(be_hier=gen["fub"].map(hier)).merge(rec, left_on="be_hier", right_on="object")
         assert len(merged) >= len(gen) - 3
         assert np.allclose(merged["be_mw"], merged["value"], rtol=2e-3)
+        assert np.allclose(merged["be_leakage_mw"], merged["object"].map(leak), rtol=2e-3)   # LkgPwr round-trips too
 
 
 def test_pipeline_roundtrip_clean(tmp_path, clean_root):

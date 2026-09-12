@@ -32,8 +32,8 @@ def _spec(m) -> SourceSpec:
 
 # metrics each source is expected to deliver (used by lineage/sanitize to report gaps)
 SOURCE_METRICS = {
-    "pprtl": ("fe_logical_mw", "fe_physical_mw", "cg_efficiency"),
-    "primepower": ("be_mw",),
+    "pprtl": ("fe_logical_mw", "fe_physical_mw", "fe_leakage_mw", "cg_efficiency"),
+    "primepower": ("be_mw", "be_leakage_mw"),
     "voltus": ("be_voltus_mw",),
     "starrc": ("wire_cap_pf", "cell_cap_pf"),
     "implementation": ("area", "cell_count", "fanout", "wire_length_um", "avg_net_length_um"),
@@ -48,6 +48,8 @@ METRIC_SCOPE = {
     "fe_logical_mw": ("workload", "operating_point"),
     "fe_physical_mw": ("workload", "operating_point"),
     "be_mw": ("workload", "operating_point"),
+    "be_leakage_mw": ("workload", "operating_point"),
+    "fe_leakage_mw": ("workload", "operating_point"),
     "be_voltus_mw": ("workload", "operating_point"),
     "cg_efficiency": ("workload", "operating_point"),
     "activity": ("workload",),
@@ -71,6 +73,7 @@ STAGE_OF_SOURCE = {name: sp.stage for name, sp in SOURCE_SPECS.items()}
 # timing takes the worst value, design-level values are taken as-is.
 METRIC_AGG = {
     "fe_logical_mw": "sum", "fe_physical_mw": "sum", "be_mw": "sum", "be_voltus_mw": "sum",
+    "be_leakage_mw": "sum", "fe_leakage_mw": "sum",
     "wire_cap_pf": "sum", "cell_cap_pf": "sum", "area": "sum", "cell_count": "sum", "wire_length_um": "sum",
     "bits_per_cycle": "sum", "net_count": "sum", "violating_endpoints": "sum", "tns_ps": "sum",
     "activity": "mean", "fanout": "mean", "avg_net_length_um": "mean", "cg_efficiency": "mean",

@@ -1,5 +1,8 @@
-# Power budgets checked by `powermet budget check`.
-# scope: "design" | "partition:<name>" | "fub:<name>" | "model_root:<id>"
+# Power budgets and convergence targets, checked by `powermet budget check` and `powermet converge`.
+# scope:  "design" | "partition:<name>" | "fub:<name>" | "model_root:<id>"
+# metric: be_mw (total BE power, default) | cdyn_pf (CdynTot: effective switched capacitance, pF, V/f independent)
+#         | be_leakage_mw (LkgPwr: signoff leakage) | be_dynamic_mw
+# target: the value in the metric's unit (`be_mw = 5000` is accepted as shorthand for metric = "be_mw", target = 5000)
 # tolerance_pct: allowed overshoot per milestone (early estimates get more headroom); missing keys use the defaults below.
 [defaults]
 workload = "typical"
@@ -12,6 +15,20 @@ scope = "design"
 be_mw = 5000
 owner = "power lead"
 note = "product power target at the nominal corner, typical workload"
+
+[[budget]]
+design = "DESIGN_NAME"
+scope = "design"
+metric = "cdyn_pf"
+target = 2200
+note = "CdynTot: what RTL and physical changes actually move; compare FE to BE and build to build without corner effects"
+
+[[budget]]
+design = "DESIGN_NAME"
+scope = "design"
+metric = "be_leakage_mw"
+target = 600
+note = "LkgPwr at the signoff corner; levers are Vt mix, power gating, area, memory sleep"
 
 [[budget]]
 design = "DESIGN_NAME"

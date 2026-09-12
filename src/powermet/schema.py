@@ -40,6 +40,8 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("fe_logical_mw", "float", POWER, required=True, non_negative=True, description="FE logical power estimate (mW)"),
     ColumnSpec("fe_physical_mw", "float", POWER, required=True, non_negative=True, description="FE physically-aware power estimate (mW)"),
     ColumnSpec("be_mw", "float", POWER, required=True, non_negative=True, description="BE signoff power (mW)"),
+    ColumnSpec("fe_leakage_mw", "float", POWER, non_negative=True, description="FE physically-aware leakage power estimate (mW)"),
+    ColumnSpec("be_leakage_mw", "float", POWER, non_negative=True, description="BE signoff leakage power (mW); BE dynamic = be_mw - be_leakage_mw"),
     ColumnSpec("be_voltus_mw", "float", FEATURE, non_negative=True, description="BE power from the alternate signoff engine (mW), for qualification"),
     ColumnSpec("cg_efficiency", "float", FEATURE, non_negative=True, description="Clock-gating efficiency (fraction of register clock pins gated)"),
     # physical features
@@ -75,6 +77,10 @@ COLUMNS: tuple[ColumnSpec, ...] = (
 )
 
 DERIVED_COLUMNS: tuple[str, ...] = (
+    "be_dynamic_mw",
+    "cdyn_pf",
+    "fe_cdyn_pf",
+    "leakage_fraction",
     "logical_error_mw",
     "logical_error_pct",
     "physical_error_mw",
@@ -86,6 +92,21 @@ DERIVED_COLUMNS: tuple[str, ...] = (
 BY_NAME: dict[str, ColumnSpec] = {c.name: c for c in COLUMNS}
 
 REQUIRED_COLUMNS = tuple(c.name for c in COLUMNS if c.required)
+REQUIRED_POWER_COLUMNS = tuple(c.name for c in COLUMNS if c.required and c.role == POWER)
+FE_ESTIMATE_COLUMNS = ("fe_logical_mw", "fe_physical_mw")
+# Power-convergence metrics: what a design signs up to hit. Cdyn (effective switched capacitance, pF) is
+# dynamic power with V^2 f divided out, so it is the design-owned quantity that is comparable across corners,
+# builds and FE/BE; leakage is tracked separately because its levers (Vt, gating, area) and its corner
+# sensitivity (V^3, temperature) differ from the dynamic ones.
+CONVERGENCE_METRICS: dict[str, tuple[str, str, str]] = {          # metric -> (short name, unit, component)
+    "cdyn_pf": ("CdynTot", "pF", "dynamic"),
+    "be_leakage_mw": ("LkgPwr", "mW", "leakage"),
+    "be_dynamic_mw": ("DynPwr", "mW", "dynamic"),
+    "be_mw": ("TotPwr", "mW", "total"),
+}
+METRIC_UNITS: dict[str, str] = {"be_mw": "mW", "be_dynamic_mw": "mW", "be_leakage_mw": "mW", "fe_leakage_mw": "mW",
+                                "fe_logical_mw": "mW", "fe_physical_mw": "mW", "cdyn_pf": "pF", "fe_cdyn_pf": "pF",
+                                "wire_cap_pf": "pF", "cell_cap_pf": "pF"}
 IDENTITY_COLUMNS = tuple(c.name for c in COLUMNS if c.role == IDENTITY)
 POWER_COLUMNS = tuple(c.name for c in COLUMNS if c.role == POWER)
 FEATURE_COLUMNS = tuple(c.name for c in COLUMNS if c.role == FEATURE)
@@ -112,6 +133,12 @@ LABELS: dict[str, str] = {
     "fe_logical_mw": "FE Logical Power",
     "fe_physical_mw": "FE Physical Power",
     "be_mw": "BE Power",
+    "be_leakage_mw": "BE Leakage",
+    "be_dynamic_mw": "BE Dynamic Power",
+    "fe_leakage_mw": "FE Leakage",
+    "cdyn_pf": "CdynTot",
+    "fe_cdyn_pf": "FE CdynTot",
+    "leakage_fraction": "Leakage Fraction",
     "wire_cap_pf": "Wire Cap",
     "cell_cap_pf": "Cell Cap",
     "area": "Area",

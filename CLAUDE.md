@@ -19,7 +19,8 @@ abstractions. `docs/portability.md` is the adaptation checklist; keep it and `po
 - `src/powermet/extract/` — one adapter per EDA source (`get_files()` locates, `parse()` reads). Contract in `base.py`.
 - `identity.py` (ModelRoot), `lineage.py`, `measurements.py` (MeasurementStore), `selection.py` (DatasetSlice), `pipeline.py` (ingest).
 - `sanitize.py` (quality checks registry + per-metric trust), `validation.py`, `catalog.py` (SQLite), `profiling.py`.
-- Power closure: `budgets.py` (milestone budgets), `intent.py` (UPF), `qualify.py` (engine/estimator qualification), `hotspots.py`.
+- Power closure: `budgets.py` (milestone budgets on any convergence metric), `intent.py` (UPF), `qualify.py` (engine/estimator qualification), `hotspots.py`.
+- Power convergence (what the flow drives): `schema.CONVERGENCE_METRICS` (CdynTot `cdyn_pf`, LkgPwr `be_leakage_mw`, total), `metrics.add_convergence_metrics`, `convergence.py` (gap, trend, projection, verdict; `plan()` ranks techniques by the component they move via `Technique.reduces` / `TechniqueResult.saving_for`). Leakage comes from the PrimePower / PPRTL leakage columns (`be_leakage_mw`, `fe_leakage_mw`).
 - Methodology variants: `identity.IdentityStrategy` + `NameRules` (same hierarchy, explicit map, replicated, merged, split), `profiles.py` + `profiles/*.toml`, `extract.METRIC_AGG`; `techniques.py` registry. Docs: `docs/methodology-variants.md`, `docs/power-techniques.md`.
 - `modeling.py` (MODEL_REGISTRY, build-based split/CV), `features.py`, `decomposition.py`, `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `explore.py`, `integrate.py`.
 - `cli.py` is argparse only; business logic lives in modules. `reporting.py` builds the 24-section Markdown report.
@@ -32,6 +33,7 @@ abstractions. `docs/portability.md` is the adaptation checklist; keep it and `po
 - Dev env: `uv venv --python 3.12 .venv && uv pip install -e ".[all,dev]"`. Tests: `.venv/bin/pytest -q` (~40 s).
 - Keep abstractions single-sourced: object names resolve only in `ModelRoot` (strategy + map shape, never pipeline code); dataset slicing only via `DatasetSlice`; metric lists derive from `schema.py` / `extract/__init__.py`; new model kinds are a `ModelSpec`; new quality checks are a `CHECKS` entry plus one `mark()`.
 - Rows are never split at random; hold out whole builds. Report associations, never causes. Round output sensibly.
+- Convergence targets are extensive sums over a scope in the metric's own unit; a new target metric is a `CONVERGENCE_METRICS` entry (name, unit, component) and its derivation in `metrics.py`. Technique savings must state which component they move; never count a corner change against a CdynTot target.
 - Mock data (`powermet mock generate`) is a fixture with injected defects; when real report samples arrive, change `parse()`/`get_files()` in the matching adapter and extend `mockdata.py` to match.
 - Adapter formats are representative, not vendor-exact (SAIF follows the real SAIF 2.0 grammar). `stage` is always `FE_BE`. Timing is a partition attribute inherited by FUBs. BE hierarchy paths go through the partition (`top/part_<p>/u_<fub>`); activity comes from the physical-hierarchy SAIF written by the Verdi FSDB → SAIF flow, with the flow inputs recorded in `metadata.json` → `activity_flow`.
 

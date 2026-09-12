@@ -293,8 +293,10 @@ def _closure_sections(project: Project, cfg: Config, df: pd.DataFrame) -> list[s
             from powermet.storage import load_dataset as _ld
             raw = _ld(project, cfg, raw=True)
             st = check_budgets(raw, load_budgets(bpath), lineage=load_table(project, "lineage"))
-            L.append(_md_table(["Design", "Scope", "Build", "Milestone", "Budget", "Actual", "FUBs", "Margin", "Trend", "Status"],
-                               [[s_.budget.design, s_.budget.scope, s_.build, s_.milestone, fmt_mw(s_.budget.be_mw), fmt_mw(s_.actual_mw),
+            from powermet.budgets import fmt_metric
+            L.append(_md_table(["Design", "Scope", "Metric", "Build", "Milestone", "Target", "Actual", "FUBs", "Margin", "Trend", "Status"],
+                               [[s_.budget.design, s_.budget.scope, s_.budget.short_metric, s_.build, s_.milestone,
+                                 fmt_metric(s_.budget.target, s_.budget.metric), fmt_metric(s_.actual, s_.budget.metric),
                                  f"{s_.fubs_measured}/{s_.fubs_expected}" if s_.fubs_expected else str(s_.fubs_measured),
                                  fmt_pct(s_.margin_pct, True), fmt_pct(s_.trend_pct_per_build, True) + "/build" if np.isfinite(s_.trend_pct_per_build) else "n/a",
                                  s_.status + ("" if s_.complete else " (INCOMPLETE)")] for s_ in st]))

@@ -37,6 +37,8 @@ DESCRIPTION = "BE signoff power per physical hierarchy"
 DEFAULT_PATTERN = "primepower/{workload}_{operating_point}/power_hier.rpt"
 OBJECT_KIND = BE_HIER
 METRIC = "be_mw"
+LEAK_METRIC = "be_leakage_mw"
+COMPONENT_TOL = 0.02      # |int + switch + leak - total| / total above this is reported
 _ROW_RE = re.compile(r"^(?P<indent>\s*)(?P<name>\S+)(?:\s+\((?P<ref>[^)]*)\))?\s+(?P<nums>[-+\d.eE\s]+)$")
 
 
@@ -50,6 +52,7 @@ def parse(path: Path, **context) -> ParsedReport:
     unit = units_from_text(hdr.get("power units", "W"), "W")
     start = find_table_start(lines, "Hierarchy")
     rows, refs = [], {}
+    n_mismatch = 0
     stack: list[tuple[int, str]] = []     # (indent, full path)
     for line in lines[start:]:
         if not line.strip() or set(line.strip()) <= set("-="):
@@ -68,10 +71,15 @@ def parse(path: Path, **context) -> ParsedReport:
         stack.append((indent, full))
         if not stack[:-1]:
             continue    # top-level total row: not a FUB object
-        total = to_float(nums[3])
+        internal, switching, leak, total = (to_float(x) for x in nums[:4])
+        if total > 0 and abs(internal + switching + leak - total) > COMPONENT_TOL * total:
+            n_mismatch += 1
         val, cu = convert_unit(total, unit, METRIC)
         rows.append({"object": full, "object_kind": OBJECT_KIND, "metric": METRIC,
                      "value": val, "unit": cu, "unit_original": unit})
+        lval, _ = convert_unit(leak, unit, LEAK_METRIC)
+        rows.append({"object": full, "object_kind": OBJECT_KIND, "metric": LEAK_METRIC,
+                     "value": lval, "unit": cu, "unit_original": unit})
         if m.group("ref"):
             refs[full] = m.group("ref")
     rec = make_records(rows)
@@ -79,6 +87,8 @@ def parse(path: Path, **context) -> ParsedReport:
     scenario = hdr.get("scenario", "")
     wl, _, op = scenario.partition("@")
     notes = [f"power converted from {unit} to mW"] if unit != "mW" else []
+    if n_mismatch:
+        notes.append(f"{n_mismatch} rows where internal + switching + leakage differs from total by > {COMPONENT_TOL:.0%}")
     return ParsedReport(
         source=SOURCE, path=Path(path), tool=tool_name(hdr, "PrimePower"), tool_version=hdr.get("version", "?"),
         records=rec, run_id=hdr.get("run"), report_date=hdr.get("date"),

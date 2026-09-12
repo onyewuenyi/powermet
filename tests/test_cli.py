@@ -138,6 +138,11 @@ def test_closure_cli(workdir, capsys):
     assert run("intent", "show") == 0
     assert "Power intent (UPF) coverage" in capsys.readouterr().out
     assert run("db", "query", "SELECT COUNT(*) n FROM budget_status") == 0
+    assert run("converge", "--plan", "--top", "3") == 0
+    out = capsys.readouterr().out
+    assert "POWER CONVERGENCE" in out and "CdynTot" in out and "LkgPwr" in out and "Verdict" in out
+    assert run("db", "query", "SELECT DISTINCT metric FROM budget_status") == 0
+    assert "cdyn_pf" in capsys.readouterr().out
 
 
 def test_init_scaffolds_templates(workdir, capsys):

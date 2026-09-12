@@ -115,11 +115,14 @@ top                       1.0e+00 1.0e+00 1.0e-01 2.1e+00 100.0
 
 def test_primepower_hierarchy_reconstruction_and_units(tmp_path):
     rep = primepower.parse(_write(tmp_path, "pp.rpt", PRIMEPOWER))
-    objs = dict(zip(rep.records["object"], rep.records["value"]))
+    tot = rep.records[rep.records["metric"] == "be_mw"]
+    objs = dict(zip(tot["object"], tot["value"]))
     assert objs == pytest.approx({"top/u_a": 820.0, "top/u_a/u_a_sub": 210.0, "top/u_b": 1050.0})
+    leak = rep.records[rep.records["metric"] == "be_leakage_mw"]
+    assert dict(zip(leak["object"], leak["value"])) == pytest.approx({"top/u_a": 20.0, "top/u_a/u_a_sub": 10.0, "top/u_b": 50.0})
     assert (rep.records["unit"] == "mW").all() and (rep.records["unit_original"] == "W").all()
     assert rep.workload == "typical" and rep.operating_point == "nom" and rep.run_id == "r1"
-    assert rep.records["reference"].tolist() == ["A", "ASUB", "B"]
+    assert tot["reference"].tolist() == ["A", "ASUB", "B"]
     assert rep.notes == ["power converted from W to mW"]
 
 
@@ -193,7 +196,7 @@ def test_pprtl_mode_aliases_and_errors(tmp_path):
     assert rep.records["metric"].tolist() == ["fe_logical_mw"] and rep.workload == "compute" and rep.operating_point == "eco"
     assert rep.tool == "PowerPro-RTL" and (rep.records["object_kind"] == FE_HIER).all()
     rep2 = pprtl.parse(_write(tmp_path, "p2.rpt", PPRTL.replace("Mode: logical", "Mode: physical")))
-    assert rep2.records["metric"].tolist() == ["fe_physical_mw"]
+    assert rep2.records["metric"].tolist() == ["fe_physical_mw", "fe_leakage_mw"]      # physical-aware mode carries the leakage estimate
     with pytest.raises(ValueError, match="unknown PPRTL mode"):
         pprtl.parse(_write(tmp_path, "p3.rpt", PPRTL.replace("Mode: logical", "Mode: bogus")))
 

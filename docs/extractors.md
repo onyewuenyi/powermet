@@ -49,7 +49,7 @@ unit normalization), so replacing them with vendor-exact parsing is a local chan
   by `<top>/part_<partition>`; `object_kind = partition`, fanned out to every FUB of that partition by lineage.
 - PPRTL: `Mode: rtl | physical-aware` selects `fe_logical_mw` / `fe_physical_mw`; table columns
   `Hierarchy Internal Switching Leakage Total`.
-- PrimePower: `Power Units = 1W|1mW`; `Scenario: <workload>@<op>`; indented `name (ref) Int Switch Leak Total %`
+- PrimePower: `Power Units = 1W|1mW`; `Scenario: <workload>@<op>`; indented `name (ref) Int Switch Leak Total %`; Total → `be_mw`, Leak → `be_leakage_mw` (LkgPwr; dynamic and CdynTot derive from the pair), rows whose components do not sum to the total are noted
   rows; full path rebuilt from indentation, top-level row skipped.
 - StarRC: `Capacitance units: pF|fF`; `Instance Nets TotalCap WireCap PinCap` → `wire_cap_pf`, `cell_cap_pf`.
 - Implementation: `Area units: um^2`; `Hierarchy CellArea CellCount AvgFanout Utilization [WireLength AvgNetLen]` →

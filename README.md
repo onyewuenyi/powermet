@@ -29,6 +29,7 @@ was written against.
 | **V3** | Can I answer workload / design what-if questions? | `workload summary`, `explore sweep/opmap/scenario`, `model export`, `integrate trace` |
 | **Timing** | What physical changes improve timing but hurt power? | `analyze deltas`, `analyze frontier`, timing-feasible `explore` |
 | **Closure** | Are we within budget at this milestone, is the power intent consistent, can I trust this engine? | `budget check`, `intent show`, `qualify`, `analyze hotspots` |
+| **Convergence** | Will the design hit its CdynTot and LkgPwr targets, and which techniques close the gap? | `converge --plan`, `techniques assess` |
 
 ## Install
 
@@ -61,6 +62,7 @@ powermet explore sweep --design GPU_A --workload compute --param frequency_ghz -
 powermet explore opmap --design GPU_A --add "v=0.78,f=2.3"
 powermet explore scenario examples/scenarios/gpu_a.toml
 powermet budget check --history               # budgets per design/partition vs milestone tolerance; ON TRACK / AT RISK / OVER
+powermet converge --plan                      # CdynTot / LkgPwr / total targets: gap, trend, builds-to-target, ranked closure plan
 powermet analyze hotspots --design GPU_A      # share, power density, growth vs previous build, clock-gating efficiency
 powermet qualify --a be_mw --b be_voltus_mw   # engine-to-engine qualification with a tolerance and PASS/FAIL
 powermet intent show                          # UPF domains per FUB, missing domains, voltage mismatches
@@ -179,6 +181,15 @@ long provenance table. See `docs/extractors.md`.
   operand isolation, glitch reduction and memory sleep (problem, mechanism, trade-off, considerations, data
   needed); `techniques assess` ranks candidate FUBs and estimates savings under stated assumptions, and says
   which source would enable the techniques it cannot assess (`docs/power-techniques.md`).
+- **Power convergence**: the thing the whole flow drives. Targets are set per milestone on the design-owned
+  quantities, not just total power: **CdynTot** (`cdyn_pf`, effective switched capacitance = dynamic power with
+  V²f divided out, so it compares FE to BE, build to build and corner to corner) and **LkgPwr**
+  (`be_leakage_mw`, tracked separately because its levers and corner sensitivity differ). PrimePower and PPRTL
+  leakage columns are kept as `be_leakage_mw` / `fe_leakage_mw`; `sanitize` flags leakage that exceeds the total or
+  varies with the workload. `converge` reports gap, cut needed, trend and builds-to-target with a
+  CONVERGED / CONVERGING / FLAT / DIVERGING verdict; `converge --plan` ranks the techniques that move the target's
+  component (dynamic levers for a CdynTot gap, leakage levers for LkgPwr, corner changes never counted against a
+  fixed-corner target) by the share of the gap each covers (`docs/methodology.md`, "Power convergence").
 - **Power closure**: `budget check` tracks budgets per design / partition / FUB against a per-milestone
   tolerance with trend, FUB coverage and the model's error band; `intent show` verifies UPF domains and
   supply states against the operating points; `qualify` compares two estimates of the same quantity (engine

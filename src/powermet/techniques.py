@@ -29,6 +29,18 @@ class TechniqueResult:
     assumptions: list[str]
     missing_data: list[str] = field(default_factory=list)
     scope: str = ""
+    est_dynamic_saving_mw: float = float("nan")     # share of the saving that lowers dynamic power (-> CdynTot)
+    est_leakage_saving_mw: float = float("nan")     # share that lowers leakage (-> LkgPwr)
+
+    def saving_for(self, component: str) -> float:
+        """Saving attributable to a convergence component: dynamic | leakage | total (mW)."""
+        if component == "total":
+            return self.est_saving_mw
+        v = self.est_dynamic_saving_mw if component == "dynamic" else self.est_leakage_saving_mw
+        if np.isfinite(v):
+            return v
+        t = BY_KEY[self.technique]
+        return self.est_saving_mw if t.reduces == component else 0.0
 
 
 @dataclass(frozen=True)
@@ -42,6 +54,7 @@ class Technique:
     considerations: str                 # when it applies / what to check
     data_needed: tuple[str, ...]        # dataset columns the assessment uses
     assess: Callable[[pd.DataFrame, dict], TechniqueResult]
+    reduces: str = "dynamic"            # convergence component the saving lands on: dynamic (CdynTot) | leakage (LkgPwr) | corner (V/f only)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -54,9 +67,18 @@ def _have(df: pd.DataFrame, cols) -> list[str]:
     return [c for c in cols if c not in df.columns or df[c].isna().all()]
 
 
+LEAK_SOURCE = {"measured": "leakage from the PrimePower leakage column (be_leakage_mw)",
+               "decomposition": "leakage share from the data-movement decomposition",
+               "assumed": "leakage assumed to be 15% of BE power"}
+
+
 def _dyn_leak(df: pd.DataFrame, ctx: dict) -> tuple[pd.Series, pd.Series]:
-    """Dynamic and leakage power per row: from the data-movement model if a decomposition is supplied, else a
-    fixed 85/15 split (stated as an assumption)."""
+    """Dynamic and leakage power per row: the measured leakage column when present, else the data-movement
+    model's leakage term if a decomposition is supplied, else a fixed 85/15 split. Records which in ctx["leak_source"]."""
+    if "be_leakage_mw" in df.columns and df["be_leakage_mw"].notna().any():
+        leak = pd.to_numeric(df["be_leakage_mw"], errors="coerce").fillna(df["be_mw"] * 0.15).clip(upper=df["be_mw"])
+        ctx["leak_source"] = "measured"
+        return df["be_mw"] - leak, leak
     dec = ctx.get("decomposition")
     if dec is not None and len(dec) and "leakage_mw" in dec.columns:
         key = identity_key(df)
@@ -64,8 +86,14 @@ def _dyn_leak(df: pd.DataFrame, ctx: dict) -> tuple[pd.Series, pd.Series]:
         look = dec[on + ["leakage_mw"]].drop_duplicates(subset=on)
         leak = df[on].merge(look, on=on, how="left")["leakage_mw"].to_numpy()
         leak = pd.Series(np.where(np.isfinite(leak), leak, df["be_mw"].to_numpy() * 0.15), index=df.index)
+        ctx["leak_source"] = "decomposition"
         return df["be_mw"] - leak, leak
+    ctx["leak_source"] = "assumed"
     return df["be_mw"] * 0.85, df["be_mw"] * 0.15
+
+
+def _leak_note(ctx: dict) -> str:
+    return LEAK_SOURCE[ctx.get("leak_source", "assumed")]
 
 
 # ----------------------------------------------------------------------------- assessments
@@ -83,8 +111,9 @@ def assess_clock_gating(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
     out = out[out["est_saving_mw"] > 0].sort_values("est_saving_mw", ascending=False)
     return TechniqueResult("clock_gating", True, out, float(out["est_saving_mw"].sum()),
                            [f"{reg_frac:.0%} of dynamic power is in registers and clock network", f"gating efficiency can reach {cap:.0%}",
-                            "dynamic share from the data-movement decomposition when available, else 85% of BE power"],
-                           scope=DatasetSlice(design=ctx.get("design")).describe(d))
+                            _leak_note(ctx)],
+                           scope=DatasetSlice(design=ctx.get("design")).describe(d), est_dynamic_saving_mw=float(out["est_saving_mw"].sum()),
+                           est_leakage_saving_mw=0.0)
 
 
 def assess_power_gating(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
@@ -100,12 +129,16 @@ def assess_power_gating(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
     out["idle_power_mw"] = d["be_mw"]
     out["leak_mw"] = leak
     out["est_saving_mw"] = d["be_mw"] * duty * 0.9
+    out["est_leak_saving_mw"] = leak * duty * 0.9
     out = out.sort_values("est_saving_mw", ascending=False)
+    leak_sav = float(out["est_leak_saving_mw"].sum())
     return TechniqueResult("power_gating", True, out, float(out["est_saving_mw"].sum()),
                            [f"'{idle}' workload represents the gated state", f"blocks are off {duty:.0%} of the time (idle_duty)",
                             "90% of idle power is removed when off (retention / always-on kept)",
-                            "wake-up latency, isolation and retention cost are not modelled"],
-                           scope=f"design={ctx.get('design') or 'all'}, workload={idle}")
+                            "wake-up latency, isolation and retention cost are not modelled", _leak_note(ctx),
+                            "toward convergence only the leakage part counts (LkgPwr); the idle dynamic power it removes is not a CdynTot reduction at the target workload"],
+                           scope=f"design={ctx.get('design') or 'all'}, workload={idle}",
+                           est_dynamic_saving_mw=0.0, est_leakage_saving_mw=leak_sav)
 
 
 def assess_dvfs(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
@@ -142,8 +175,9 @@ def assess_wire_cap_reduction(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
     return TechniqueResult("wire_cap_reduction", True, out, float(out["est_saving_mw"].sum()),
                            [f"placement / routing work removes {pct:g}% of wire cap on each block (wire_cap_cut_pct)",
                             "wire switching power scales with wire cap share of dynamic power",
-                            "use `model predict --scale wire_cap_pf=0.9` for the model-based number with its interval"],
-                           scope=DatasetSlice(design=ctx.get("design")).describe(d))
+                            "use `model predict --scale wire_cap_pf=0.9` for the model-based number with its interval", _leak_note(ctx)],
+                           scope=DatasetSlice(design=ctx.get("design")).describe(d), est_dynamic_saving_mw=float(out["est_saving_mw"].sum()),
+                           est_leakage_saving_mw=0.0)
 
 
 def assess_vt_swap(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
@@ -160,8 +194,9 @@ def assess_vt_swap(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
     return TechniqueResult("vt_swap", True, out, float(out["est_saving_mw"].sum()),
                            ["only blocks whose partition has > slack_margin_ps of positive slack can absorb slower cells",
                             "40% of leakage removed by moving non-critical cells to higher-Vt (typical LVT -> SVT/HVT range 30-60%)",
-                            "leakage share from the decomposition when available, else 15% of BE power"],
-                           scope=DatasetSlice(design=ctx.get("design")).describe(d))
+                            _leak_note(ctx)],
+                           scope=DatasetSlice(design=ctx.get("design")).describe(d), est_dynamic_saving_mw=0.0,
+                           est_leakage_saving_mw=float(out["est_saving_mw"].sum()))
 
 
 def assess_not_assessable(key: str, needs: list[str]):
@@ -178,49 +213,49 @@ TECHNIQUES: tuple[Technique, ...] = (
               "An integrated clock gate stops the clock to a register bank when its enable is false, removing the clock pin switching and the downstream toggles.",
               "Adds ICG cells and enable logic (area, a small timing hit on the enable path), can create clock-tree imbalance, and low-activity enables gain nothing.",
               "Look for blocks with high dynamic power and low ClockGatingEff; check enable coverage per register bank in the RTL power tool; verify with a workload that actually idles the block.",
-              ("be_mw", "cg_efficiency"), assess_clock_gating),
+              ("be_mw", "cg_efficiency"), assess_clock_gating, "dynamic"),
     Technique("power_gating", "Power gating (domain shutoff)", "physical",
               "Leakage and idle clocking burn power in blocks that are off for long stretches of a workload.",
               "A switched supply (header/footer cells) cuts the domain's rail; state is kept in retention flops or restored on wake.",
               "Wake-up latency and rush current, isolation cells on every boundary, retention or re-initialisation, always-on logic, verification burden in UPF.",
               "Needs long idle intervals (microseconds and up), a clean UPF domain boundary and an architectural owner of the on/off policy; assess with an idle workload and a duty cycle.",
-              ("be_mw", "workload"), assess_power_gating),
+              ("be_mw", "workload"), assess_power_gating, "leakage"),
     Technique("dvfs", "Dynamic voltage and frequency scaling / AVS", "runtime",
               "Running at the turbo corner when the workload does not need it wastes V^2 f power.",
               "Power scales roughly with V^2 f while performance scales with f, so a lower corner buys energy per op when throughput is not the bottleneck.",
               "Voltage regulator and clock infrastructure, timing closure at every corner, transition latency, and a control loop that must not oscillate.",
               "Use the energy-per-op view (`explore opmap`) not raw power; memory-bound workloads (throughput exponent b < 1) benefit most; check the timing model marks the corner feasible.",
-              ("be_mw", "voltage_v", "frequency_ghz"), assess_dvfs),
+              ("be_mw", "voltage_v", "frequency_ghz"), assess_dvfs, "corner"),
     Technique("wire_cap_reduction", "Wire capacitance reduction (placement, routing, buffering)", "physical",
               "Wire-dominated blocks spend their dynamic power charging interconnect rather than cells; FE estimates miss most of it.",
               "Tighter placement, shorter nets, fewer buffers and better layer assignment reduce the capacitance switched per toggle.",
               "Placement density and congestion, timing on long nets, and routing effort; the gain is per block and hard to predict before P&R.",
               "Rank by wire-cap fraction and dynamic power; validate with a what-if on wire cap using the fitted model and compare against the next build.",
-              ("be_mw", "wire_cap_pf", "cell_cap_pf"), assess_wire_cap_reduction),
+              ("be_mw", "wire_cap_pf", "cell_cap_pf"), assess_wire_cap_reduction, "dynamic"),
     Technique("vt_swap", "Multi-Vt / Vt swap and cell downsizing", "physical",
               "Low-Vt, high-drive cells leak heavily; many sit on paths with timing slack that never needed them.",
               "Swap non-critical cells to higher-Vt or smaller drive; leakage drops exponentially with Vt, dynamic power drops with drive.",
               "Consumes timing slack, can move the critical path, and the saving is bounded by the leakage share of power.",
               "Only where the partition has positive slack; confirm leakage share from a leakage-aware model or a PrimePower leakage column.",
-              ("be_mw", "wns_ps"), assess_vt_swap),
+              ("be_mw", "wns_ps"), assess_vt_swap, "leakage"),
     Technique("operand_isolation", "Operand isolation / data gating", "rtl",
               "Datapath inputs toggle and propagate through arithmetic units whose results are discarded.",
               "Gate the operands (AND/latch) when the unit output is unused so the datapath does not switch.",
               "Extra gating logic on wide buses (area, delay) and the risk of gating a live path; benefit depends on how often results are discarded.",
               "Needs per-unit toggle data with a 'result used' signal; not derivable from block-level SAIF.",
-              (), assess_not_assessable("operand_isolation", ["per-net toggle counts with datapath enable correlation (RTL power tool report)"])),
+              (), assess_not_assessable("operand_isolation", ["per-net toggle counts with datapath enable correlation (RTL power tool report)"]), "dynamic"),
     Technique("glitch_reduction", "Glitch power reduction", "synthesis",
               "Unequal arrival times cause spurious transitions in combinational logic; PrimePower with glitch analysis shows it as 5-20% of dynamic power in some datapaths.",
               "Balance path delays, restructure logic, insert selective gating so nets settle once per cycle.",
               "Costs area and design effort; needs a glitch-aware power run to even see it.",
               "Requires a glitch-mode power report per block; add it as a source and compare to the non-glitch run.",
-              (), assess_not_assessable("glitch_reduction", ["glitch-aware PrimePower report (glitch power per hierarchy)"])),
+              (), assess_not_assessable("glitch_reduction", ["glitch-aware PrimePower report (glitch power per hierarchy)"]), "dynamic"),
     Technique("memory_low_power", "Memory sleep modes and banking", "architecture",
               "SRAM leakage and peripheral clocking dominate in memory-heavy blocks even when the array is idle.",
               "Light-sleep / deep-sleep / shutdown modes on macros, bank-level enables, and smaller active banks per access.",
               "Wake-up latency per mode, control logic, and lost bandwidth if banking is too fine.",
               "Needs memory instances identified per FUB with their mode power from the memory compiler datasheet.",
-              (), assess_not_assessable("memory_low_power", ["memory instance list per FUB", "macro mode power (compiler datasheet)"])),
+              (), assess_not_assessable("memory_low_power", ["memory instance list per FUB", "macro mode power (compiler datasheet)"]), "leakage"),
 )
 BY_KEY = {t.key: t for t in TECHNIQUES}
 
@@ -240,8 +275,9 @@ def assess_all(df: pd.DataFrame, ctx: dict, keys: list[str] | None = None) -> li
 def render_catalog() -> str:
     lines = []
     for t in TECHNIQUES:
+        moves = {"dynamic": "dynamic power -> CdynTot", "leakage": "leakage -> LkgPwr", "corner": "operating corner (V, f); CdynTot unchanged"}[t.reduces]
         lines += [f"{t.key}  [{t.stage}]  {t.name}", f"  problem        {t.problem}", f"  mechanism      {t.why}",
-                  f"  trade-off      {t.tradeoff}", f"  considerations {t.considerations}",
+                  f"  trade-off      {t.tradeoff}", f"  considerations {t.considerations}", f"  moves          {moves}",
                   f"  data           {', '.join(t.data_needed) or 'not assessable from the dataset'}", ""]
     return "\n".join(lines)
 
@@ -251,9 +287,9 @@ def render_results(results: list[TechniqueResult], top: int = 5) -> str:
     rows = []
     for r in results:
         t = BY_KEY[r.technique]
-        rows.append([t.name, t.stage, fmt_mw(r.est_saving_mw) if r.assessable else "n/a",
+        rows.append([t.name, t.stage, t.reduces, fmt_mw(r.est_saving_mw) if r.assessable else "n/a",
                      f"{len(r.candidates):,} candidates" if r.assessable else "needs: " + "; ".join(r.missing_data)])
-    out.append(table(["Technique", "Stage", "Est. saving", "Status"], rows, ["l", "l", "r", "l"]))
+    out.append(table(["Technique", "Stage", "Moves", "Est. saving", "Status"], rows, ["l", "l", "l", "r", "l"]))
     for r in results:
         if not r.assessable or not len(r.candidates):
             continue

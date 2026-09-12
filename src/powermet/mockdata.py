@@ -37,7 +37,7 @@ from powermet.demo import DemoData, DemoSpec, generate_all
 
 
 BE_LAYOUTS = ("separate", "same_hierarchy", "replicated", "merged", "split", "mixed")
-EXTENSIVE = ("be_mw", "wire_cap_pf", "cell_cap_pf", "area", "cell_count", "wire_length_um", "bits_per_cycle")
+EXTENSIVE = ("be_mw", "be_leakage_mw", "fe_leakage_mw", "wire_cap_pf", "cell_cap_pf", "area", "cell_count", "wire_length_um", "bits_per_cycle")
 
 
 def be_layout(h: pd.DataFrame, methodology: str, top: str) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -248,7 +248,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         for wl in wls:
             for op in ops:
                 sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)].set_index("fub")
-                ov = object_values(objs, sub, ("be_mw",))
+                ov = object_values(objs, sub, ("be_mw", "be_leakage_mw"))
                 out = run_dir / "primepower" / f"{wl}_{op}"
                 out.mkdir(parents=True, exist_ok=True)
                 total = float(ov["be_mw"].sum())
@@ -261,17 +261,20 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                          f"{'Hierarchy':40}{'Power':>11}{'Power':>11}{'Power':>11}{'Power':>11}",
                          "-" * 91]
 
-                def prow(indent, label, v, pct):
-                    return f"{' ' * indent}{label:{40 - indent}}{v*0.45:11.4e}{v*0.45:11.4e}{v*0.10:11.4e}{v:11.4e}{pct:7.1f}"
+                def prow(indent, label, v, pct, lk):
+                    dyn = max(v - lk, 0.0)
+                    return f"{' ' * indent}{label:{40 - indent}}{dyn*0.52:11.4e}{dyn*0.48:11.4e}{lk:11.4e}{v:11.4e}{pct:7.1f}"
 
-                pv = []
+                pv, leak_of = [], {}
                 for _, o in ov.iterrows():
                     v = o["be_mw"]
+                    lk = float(o["be_leakage_mw"])
                     if vectorless:
                         v = v * float(rng.uniform(0.85, 1.25))     # default-activity estimate: biased and noisier
                     if zero_pp == o["fub"]:
-                        v = 0.0004
+                        v, lk = 0.0004, 0.0001
                     pv.append((o["path"], v))
+                    leak_of[o["path"]] = min(lk, v)
                 leaves = {p_: v for p_, v in pv}
                 ref = {o["path"]: h.loc[o["fub"], "synth_object"] for _, o in ov.iterrows()}
                 for depth, leaf, v in hierarchical_rows(pv):
@@ -280,7 +283,8 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                         if p_.endswith("/" + leaf) or p_ == leaf:
                             key = p_
                     label = leaf if depth == 0 else (f"{leaf} ({ref[key]})" if key in ref and leaves.get(key) == v else f"{leaf} ({leaf.upper()})")
-                    row = prow(depth * 2, label, v * scale, v / total * 100 if total else 0.0)
+                    lk = leak_of[key] if key in leaves and leaves.get(key) == v else sum(l_ for p_, l_ in leak_of.items() if ("/" + leaf + "/") in p_ or p_.startswith(leaf + "/"))
+                    row = prow(depth * 2, label, v * scale, v / total * 100 if total else 0.0, lk * scale)
                     lines.append(row)
                     if dup_pp and key in leaves and leaves[key] == v and ov[ov["path"] == key]["fub"].iloc[0] == dup_pp:
                         lines.append(row)
@@ -337,7 +341,8 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                              "-" * 96]
                     for _, r in sub.iterrows():
                         v = r[col]
-                        line = f"{h.loc[r['fub'], 'fe_hier']:44}{v*0.5:10.3f}{v*0.42:11.3f}{v*0.08:9.3f}{v:9.3f}"
+                        lk = min(float(r["fe_leakage_mw"]) * (1.0 if cg else 0.9), v)
+                        line = f"{h.loc[r['fub'], 'fe_hier']:44}{(v-lk)*0.54:10.3f}{(v-lk)*0.46:11.3f}{lk:9.3f}{v:9.3f}"
                         if cg:
                             line += f"{r['cg_efficiency']:16.2f}"
                         lines.append(line)
@@ -438,10 +443,11 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                     lines = ["Cadence Voltus Power Report", "Version: 23.10", f"Design: {top}   Run: {run_id}   Date: {m['build_date']}",
                              f"Activity: SAIF   Scenario: {wl}@{op}", "Units: mW",
                              f"{'Instance':44}{'Internal':>10}{'Switching':>11}{'Leakage':>9}{'Total':>9}"]
-                    ov = object_values(objs, sub.set_index("fub"), ("be_mw",))
+                    ov = object_values(objs, sub.set_index("fub"), ("be_mw", "be_leakage_mw"))
                     for _, r in ov.iterrows():
                         v = r["be_mw"] * 0.97 * float(rng.lognormal(0, 0.03))
-                        lines.append(f"{r['path']:44}{v*0.5:10.2f}{v*0.42:11.2f}{v*0.08:9.2f}{v:9.2f}")
+                        lk = min(float(r["be_leakage_mw"]) * 0.95, v)
+                        lines.append(f"{r['path']:44}{(v-lk)*0.54:10.2f}{(v-lk)*0.46:11.2f}{lk:9.2f}{v:9.2f}")
                     (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
 
         # ---- UPF power intent: one domain per partition, supply states per operating point
@@ -474,16 +480,24 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                              ).to_csv(run_dir / "perf" / f"{wl}_{op}.csv", index=False)
 
     # budgets: design totals at ~2% under the final build (so late builds sit at risk) and partition budgets
-    lines = ["# power budgets: scope = design | partition:<name> | fub:<name>; tolerance per milestone (%)",
+    lines = ["# power budgets and convergence targets: scope = design | partition:<name> | fub:<name>; tolerance per milestone (%)",
+             "# metric = be_mw (default) | cdyn_pf (CdynTot, pF) | be_leakage_mw (LkgPwr) | be_dynamic_mw",
              "[defaults]", 'workload = "typical"', 'operating_point = "nom"',
              "tolerance_pct = { rtl = 25, synthesis = 15, placement = 10, route = 5, signoff = 0 }", ""]
     last = builds[-1]
     wl0 = "typical" if "typical" in spec.workloads else spec.workloads[0]
     op0 = "nom" if "nom" in spec.operating_points else spec.operating_points[0]
-    lines[2:4] = [f'workload = "{wl0}"', f'operating_point = "{op0}"']
+    i0 = lines.index("[defaults]") + 1
+    lines[i0:i0 + 2] = [f'workload = "{wl0}"', f'operating_point = "{op0}"']
     for design in designs:
         sub = meas[(meas.design == design) & (meas.build == last) & (meas.workload == wl0) & (meas.operating_point == op0)]
         lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', f"be_mw = {sub['be_mw'].sum() * 0.98:.0f}", 'owner = "power lead"', ""]
+        dyn = (sub["be_mw"] - sub["be_leakage_mw"]).clip(lower=0)
+        cdyn = float((dyn / (sub["voltage_v"] ** 2 * sub["frequency_ghz"])).sum())
+        lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', 'metric = "cdyn_pf"', f"target = {cdyn * 0.96:.1f}",
+                  'note = "CdynTot: effective switched capacitance target, V/f independent"', ""]
+        lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', 'metric = "be_leakage_mw"', f"target = {sub['be_leakage_mw'].sum() * 1.03:.1f}",
+                  'note = "LkgPwr at the nominal corner"', ""]
         hh = hier[hier.design == design]
         for i, part in enumerate(sorted(hh["partition"].unique())):
             fubs = hh[hh.partition == part]["fub"]

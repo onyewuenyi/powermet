@@ -37,8 +37,32 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     out["physical_error_pct"] = _safe_div(be - fe_p, be) * 100.0
     out["logical_to_be_ratio"] = _safe_div(fe_l, be)
     out["physical_to_be_ratio"] = _safe_div(fe_p, be)
+    add_convergence_metrics(out)
     if "clock_period_ps" in out.columns and "wns_ps" in out.columns and "fmax_ghz" not in out.columns:
         out["fmax_ghz"] = fmax_from_timing(out["clock_period_ps"], out["wns_ps"]).to_numpy()
+    return out
+
+
+def cdyn_pf(dynamic_mw, voltage_v, frequency_ghz) -> pd.Series:
+    """Effective switched capacitance Cdyn = P_dyn / (V^2 f). mW / (V^2 GHz) = 1e-3 W / (V^2 1e9 Hz) = 1e-12 F = pF exactly."""
+    v = pd.to_numeric(pd.Series(voltage_v), errors="coerce").astype(float)
+    f = pd.to_numeric(pd.Series(frequency_ghz), errors="coerce").astype(float)
+    return _safe_div(pd.Series(dynamic_mw), v ** 2 * f)
+
+
+def add_convergence_metrics(out: pd.DataFrame) -> pd.DataFrame:
+    """In place: be_dynamic_mw, cdyn_pf, fe_cdyn_pf, leakage_fraction (NaN where the inputs are absent)."""
+    n = len(out)
+    col = lambda c: pd.to_numeric(out[c], errors="coerce").astype(float) if c in out.columns else pd.Series(np.nan, index=out.index, dtype=float)
+    be, leak = col("be_mw"), col("be_leakage_mw")
+    out["be_dynamic_mw"] = (be - leak).clip(lower=0) if n else pd.Series(dtype=float)
+    out["leakage_fraction"] = _safe_div(leak, be) if n else pd.Series(dtype=float)
+    if n and "voltage_v" in out.columns and "frequency_ghz" in out.columns:
+        out["cdyn_pf"] = cdyn_pf(out["be_dynamic_mw"], out["voltage_v"], out["frequency_ghz"]).to_numpy()
+        out["fe_cdyn_pf"] = cdyn_pf((col("fe_physical_mw") - col("fe_leakage_mw")).clip(lower=0), out["voltage_v"], out["frequency_ghz"]).to_numpy()
+    else:
+        out["cdyn_pf"] = np.nan
+        out["fe_cdyn_pf"] = np.nan
     return out
 
 

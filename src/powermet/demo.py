@@ -211,6 +211,8 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
                     fe_p = (k_dyn * act * (1 + act_bias_p) * (ccap + 0.7 * wire_cap * jit * wire_bias_p) * vdd ** 2 * freq
                             + 0.6 * move + leak + rng.normal(0, 1.0, size=n_fubs))
                     be, fe_l, fe_p = (np.clip(x, 0.5, None) for x in (be, fe_l, fe_p))
+                    be_leak = np.minimum(leak, be)
+                    fe_leak = np.minimum(leak * (1 + rng.normal(0.02, 0.04, size=n_fubs)), fe_p * 0.9)   # FE leakage: small bias + noise
                     for i in range(n_fubs):
                         per, wns, tns, viol, _ = timing_at[part_of[i]]
                         rows.append({
@@ -220,6 +222,8 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
                             "fe_logical_mw": round(float(fe_l[i]), 3),
                             "fe_physical_mw": round(float(fe_p[i]), 3),
                             "be_mw": round(float(be[i]), 3),
+                            "be_leakage_mw": round(float(be_leak[i]), 3),
+                            "fe_leakage_mw": round(float(fe_leak[i]), 3),
                             "wire_cap_pf": round(float(wcap[i]), 4),
                             "cell_cap_pf": round(float(ccap[i]), 4),
                             "area": round(float(a[i]), 1),
