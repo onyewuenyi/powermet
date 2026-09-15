@@ -183,8 +183,9 @@ model's CV interval and the perf model's fit quality is reported by `workload su
 
 # Activity from SAIF
 
-Switching activity originates in the RTL simulation FSDB per workload. The FSDB → SAIF flow
-(Verdi; inputs: workload FSDB, core, FE/BE mapping data, partition list) writes a SAIF in the
+Switching activity originates in the RTL simulation FSDB per workload. An FSDB → SAIF step
+(Verdi `fsdb2saif` or the simulator's SAIF dump) plus a hierarchy-mapping step (inputs: workload FSDB,
+core, FE/BE mapping data, partition list) writes a SAIF in the
 back-end physical hierarchy, the same file that drives SAIF-based power optimization in early
 Fusion Compiler. powermet reads that SAIF and aggregates per instance including descendants:
 `activity` = mean over nets of TC / cycles (the activity factor), `bits_per_cycle` = Σ TC / cycles
@@ -265,7 +266,10 @@ and the per-partition timing model. `integrate trace` walks a phase trace (workl
 or (f, V), activity scale, duration) and reports power, throughput, energy, pJ/op and timing
 feasibility per phase and in total. `powermet.integrate.CompactPowerModel` is the reference evaluator.
 
-## Power convergence: CdynTot and LkgPwr
+## Power convergence: Cdyn and leakage power
+
+The operational side (milestone loop, gap triage, trade table, correlation gates) is
+`docs/ppa-convergence-playbook.md`; this section defines the quantities.
 
 Everything upstream exists to answer one program question: will this design hit its power target at each
 milestone, and if not, what closes the gap? The target is rarely one total-power number. Programs sign up to
@@ -273,13 +277,13 @@ two design-owned quantities:
 
 | Target | Column | Definition | Why it is the target |
 |---|---|---|---|
-| **CdynTot** | `cdyn_pf` | (BE power − leakage) / (V² · f), summed over the scope; mW / (V² · GHz) is pF exactly | Dynamic power with the corner divided out. RTL and physical changes move Cdyn; voltage and frequency do not. So it compares FE to BE, build to build and corner to corner, and a what-if on the corner cannot hide a design regression. |
-| **LkgPwr** | `be_leakage_mw` | signoff leakage at the target corner, summed over the scope | Different levers (Vt mix, power gating, area, memory sleep) and different sensitivity (∝ V³, temperature, process) from dynamic power. A total-power target lets one component hide the other. |
+| **Cdyn** | `cdyn_pf` | (BE power − leakage) / (V² · f), summed over the scope; mW / (V² · GHz) is pF exactly | Dynamic power with the corner divided out. RTL and physical changes move Cdyn; voltage and frequency do not. So it compares FE to BE, build to build and corner to corner, and a what-if on the corner cannot hide a design regression. |
+| **Leakage** | `be_leakage_mw` | signoff leakage at the target corner, summed over the scope | Different levers (Vt mix, power gating, area, memory sleep) and different sensitivity (∝ V³, temperature, process) from dynamic power. A total-power target lets one component hide the other. |
 | total | `be_mw` | BE power at the target workload and corner | The product number; kept as a target too, but it is the sum of the two above at one corner. |
 
 **Where the split comes from.** The PrimePower hierarchy report carries internal, switching and leakage
 columns; the adapter keeps the total as `be_mw` and the leakage as `be_leakage_mw`, and notes rows whose
-components do not add up. PPRTL physical-aware reports give `fe_leakage_mw`, so an FE CdynTot
+components do not add up. PPRTL physical-aware reports give `fe_leakage_mw`, so an FE Cdyn
 (`fe_cdyn_pf`) exists as soon as RTL power runs. `sanitize` flags leakage above the total and leakage that
 changes with the workload at a fixed corner (a component read from the wrong scenario), because both
 convergence metrics depend on this split being right.
@@ -297,8 +301,8 @@ applies the milestone tolerance; the verdict looks at the trajectory toward the 
 that is inside tolerance but trending up is still called out.
 
 **Closure plan.** `converge --plan` takes the technique assessments and keeps only those that move the
-target's component: a CdynTot gap is answered with dynamic levers (clock gating, wire-cap reduction,
-operand isolation, glitch reduction), a LkgPwr gap with leakage levers (Vt swap, power gating, memory sleep),
+target's component: a Cdyn gap is answered with dynamic levers (clock gating, wire-cap reduction,
+operand isolation, glitch reduction), a leakage power gap with leakage levers (Vt swap, power gating, memory sleep),
 and a corner change (DVFS) is never counted against a target stated at a fixed corner. Dynamic savings in mW
 convert to pF by dividing out V²f at the target's corner. Techniques are ranked by the share of the gap each
 covers, with the cumulative total and the remainder that no assessable technique reaches, which is the
@@ -309,10 +313,31 @@ a what-if and the next build.
 **Trade-offs and considerations.** Cdyn assumes the reported power is dominated by CV²f switching at the
 reported corner; short-circuit and glitch power fold into it, which is fine for tracking but means Cdyn is
 not a pure capacitance. Leakage at one corner does not predict leakage at another without a leakage model
-(∝ V³ in the demo, temperature and process in reality); track LkgPwr at the corner the target names.
+(∝ V³ in the demo, temperature and process in reality); track leakage power at the corner the target names.
 Apportioned FUBs (merged blocks) carry the apportion assumption into both metrics; block-level targets are
 exact, FUB-level ones are estimates. The techniques' savings overlap (clock gating and operand isolation
 compete for the same registers), so a cumulative that covers the gap on paper is an upper bound.
+
+## Comparative analysis and power bugs
+
+`anomalies.py` runs a registry of comparisons per FUB at a reference workload and corner (`analyze
+anomalies`). Each rule states what it compares (idle vs busy dynamic power; dynamic power per unit
+activity x capacitance x V^2 f against the design median with a robust z on the log ratio; this build vs
+the FUB's last good build net of what activity x capacitance explains; N consecutive rising builds; the
+clock-network share of dynamic power from the groups report; replica instances against each other; the
+leakage fraction against the design median), the class of power bug it points at, the technique that
+usually addresses it, and the threshold (`anomaly_*` in config). Findings carry the owner from the FUB
+map and a status (new / persisting) from the previous build; findings absent now but present then are
+reported as cleared. All of it is association; the designer confirms the bug. `docs/power-analysis.md`
+has the rule table and the engine reports each rule needs.
+
+## Time-based profile
+
+`timeprofile.py` summarises `power_profile.parquet` per workload x operating point: time-weighted
+average, peak window, peak-to-average, the largest window-to-window step per ns, energy (average x
+duration), pJ/op when throughput is known, and the gap between the profile average and the averaged
+hierarchical report (a mismatch beyond `anomaly_profile_tol_pct` means different netlists, parasitics or
+activity windows). The peak window is the vector for IR / thermal signoff; the average is the energy number.
 
 ## Metadata catalog
 

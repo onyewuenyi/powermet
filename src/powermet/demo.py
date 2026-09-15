@@ -145,6 +145,7 @@ def generate_all(spec: DemoSpec = DemoSpec()) -> DemoData:
                 "synth_object": f"{names[i]}_{rng.integers(0, 3)}" if rng.random() < 0.3 else names[i],
                 "be_hier": f"{top}/part_{part_of[i].lower()}/u_{names[i].lower()}" + ("_phys" if renamed else ""),
                 "n_instances": int(cell_count[i]),
+                "owner": f"rtl-{part_of[i].lower()}",     # team alias a finding on this FUB is driven to
             })
 
         k_dyn = 9.0

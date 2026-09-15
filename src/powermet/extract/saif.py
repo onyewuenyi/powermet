@@ -1,8 +1,9 @@
 """SAIF adapter: switching activity per hierarchy instance, per workload.
 
 Source of truth for activity is the RTL simulation FSDB (logical hierarchy) per workload. An
-FSDB -> SAIF flow (Verdi) takes the workload FSDB, the core, the FE/BE mapping data and the
-partition list (back-end physical hierarchy) and writes a SAIF in the physical hierarchy; that
+FSDB -> SAIF step (Verdi `fsdb2saif`, or the simulator's own SAIF dump) plus a hierarchy-mapping
+step takes the workload FSDB, the core, the FE/BE mapping data and the partition list (back-end
+physical hierarchy) and writes a SAIF in the physical hierarchy; that
 same SAIF drives SAIF-based power optimization in early Fusion Compiler (or the equivalent
 Cadence flow). This adapter reads that SAIF, so activity lands on BE hierarchy objects by
 default (`activity_hierarchy = "fe"` in metadata.json switches to the RTL-hierarchy SAIF).

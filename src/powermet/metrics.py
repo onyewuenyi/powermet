@@ -57,6 +57,7 @@ def add_convergence_metrics(out: pd.DataFrame) -> pd.DataFrame:
     be, leak = col("be_mw"), col("be_leakage_mw")
     out["be_dynamic_mw"] = (be - leak).clip(lower=0) if n else pd.Series(dtype=float)
     out["leakage_fraction"] = _safe_div(leak, be) if n else pd.Series(dtype=float)
+    out["clock_fraction"] = _safe_div(col("be_clock_mw"), out["be_dynamic_mw"]) if n else pd.Series(dtype=float)
     if n and "voltage_v" in out.columns and "frequency_ghz" in out.columns:
         out["cdyn_pf"] = cdyn_pf(out["be_dynamic_mw"], out["voltage_v"], out["frequency_ghz"]).to_numpy()
         out["fe_cdyn_pf"] = cdyn_pf((col("fe_physical_mw") - col("fe_leakage_mw")).clip(lower=0), out["voltage_v"], out["frequency_ghz"]).to_numpy()

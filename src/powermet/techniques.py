@@ -29,8 +29,8 @@ class TechniqueResult:
     assumptions: list[str]
     missing_data: list[str] = field(default_factory=list)
     scope: str = ""
-    est_dynamic_saving_mw: float = float("nan")     # share of the saving that lowers dynamic power (-> CdynTot)
-    est_leakage_saving_mw: float = float("nan")     # share that lowers leakage (-> LkgPwr)
+    est_dynamic_saving_mw: float = float("nan")     # share of the saving that lowers dynamic power (-> Cdyn)
+    est_leakage_saving_mw: float = float("nan")     # share that lowers leakage (-> leakage)
 
     def saving_for(self, component: str) -> float:
         """Saving attributable to a convergence component: dynamic | leakage | total (mW)."""
@@ -54,7 +54,7 @@ class Technique:
     considerations: str                 # when it applies / what to check
     data_needed: tuple[str, ...]        # dataset columns the assessment uses
     assess: Callable[[pd.DataFrame, dict], TechniqueResult]
-    reduces: str = "dynamic"            # convergence component the saving lands on: dynamic (CdynTot) | leakage (LkgPwr) | corner (V/f only)
+    reduces: str = "dynamic"            # convergence component the saving lands on: dynamic (Cdyn) | leakage | corner (V/f only)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -136,7 +136,7 @@ def assess_power_gating(df: pd.DataFrame, ctx: dict) -> TechniqueResult:
                            [f"'{idle}' workload represents the gated state", f"blocks are off {duty:.0%} of the time (idle_duty)",
                             "90% of idle power is removed when off (retention / always-on kept)",
                             "wake-up latency, isolation and retention cost are not modelled", _leak_note(ctx),
-                            "toward convergence only the leakage part counts (LkgPwr); the idle dynamic power it removes is not a CdynTot reduction at the target workload"],
+                            "toward convergence only the leakage part counts (leakage); the idle dynamic power it removes is not a Cdyn reduction at the target workload"],
                            scope=f"design={ctx.get('design') or 'all'}, workload={idle}",
                            est_dynamic_saving_mw=0.0, est_leakage_saving_mw=leak_sav)
 
@@ -275,7 +275,7 @@ def assess_all(df: pd.DataFrame, ctx: dict, keys: list[str] | None = None) -> li
 def render_catalog() -> str:
     lines = []
     for t in TECHNIQUES:
-        moves = {"dynamic": "dynamic power -> CdynTot", "leakage": "leakage -> LkgPwr", "corner": "operating corner (V, f); CdynTot unchanged"}[t.reduces]
+        moves = {"dynamic": "dynamic power -> Cdyn", "leakage": "leakage", "corner": "operating corner (V, f); Cdyn unchanged"}[t.reduces]
         lines += [f"{t.key}  [{t.stage}]  {t.name}", f"  problem        {t.problem}", f"  mechanism      {t.why}",
                   f"  trade-off      {t.tradeoff}", f"  considerations {t.considerations}", f"  moves          {moves}",
                   f"  data           {', '.join(t.data_needed) or 'not assessable from the dataset'}", ""]

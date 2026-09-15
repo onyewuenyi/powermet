@@ -5,7 +5,7 @@ from correlation for a data-quality reason still burns power.
 
 Budgets live in a TOML file (templates/budgets.template.toml). Each entry names a scope
 (design, partition or FUB), a workload and operating point, a metric (be_mw by default; cdyn_pf for
-CdynTot, be_leakage_mw for LkgPwr, be_dynamic_mw), a target value, and a tolerance per
+Cdyn, be_leakage_mw for leakage power, be_dynamic_mw), a target value, and a tolerance per
 milestone: early estimates are allowed more headroom than signoff. Each build carries its
 milestone in metadata.json, so `budget check` places every build against the tolerance that
 applies at that stage and classifies it ON TRACK / AT RISK / OVER, with the trend across builds

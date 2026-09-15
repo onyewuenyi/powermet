@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from powermet.extract import implementation, metadata, perf, pprtl, primepower, primetime, saif, starrc, voltus
+from powermet.extract import (implementation, metadata, perf, power_groups, power_profile, pprtl, primepower, primetime, saif,
+                              starrc, voltus)
 
-_MODULES = (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf, voltus)
+_MODULES = (metadata, pprtl, primepower, primetime, starrc, implementation, saif, perf, voltus, power_groups, power_profile)
 SOURCES = {m.SOURCE: m for m in _MODULES}
 
 
@@ -41,6 +42,8 @@ SOURCE_METRICS = {
     "primetime": ("clock_period_ps", "wns_ps", "tns_ps", "violating_endpoints"),
     "metadata": ("frequency_ghz", "voltage_v"),
     "perf": ("ipc", "throughput_gops"),
+    "power_groups": ("be_clock_mw", "be_register_mw", "be_comb_mw", "be_memory_mw"),
+    "power_profile": ("profile_total_mw", "profile_dynamic_mw", "profile_leakage_mw"),
 }
 
 # how a metric varies: which keys (besides design/build/object) it is specific to
@@ -63,6 +66,10 @@ METRIC_SCOPE = {
     "wire_cap_pf": (), "cell_cap_pf": (), "area": (), "cell_count": (), "fanout": (),
     "ipc": ("workload", "operating_point"),
     "throughput_gops": ("workload", "operating_point"),
+    "be_clock_mw": ("workload", "operating_point"), "be_register_mw": ("workload", "operating_point"),
+    "be_comb_mw": ("workload", "operating_point"), "be_memory_mw": ("workload", "operating_point"),
+    "profile_total_mw": ("workload", "operating_point"), "profile_dynamic_mw": ("workload", "operating_point"),
+    "profile_leakage_mw": ("workload", "operating_point"),
 }
 
 SOURCE_SPECS: dict[str, SourceSpec] = {m.SOURCE: _spec(m) for m in _MODULES}
@@ -74,6 +81,7 @@ STAGE_OF_SOURCE = {name: sp.stage for name, sp in SOURCE_SPECS.items()}
 METRIC_AGG = {
     "fe_logical_mw": "sum", "fe_physical_mw": "sum", "be_mw": "sum", "be_voltus_mw": "sum",
     "be_leakage_mw": "sum", "fe_leakage_mw": "sum",
+    "be_clock_mw": "sum", "be_register_mw": "sum", "be_comb_mw": "sum", "be_memory_mw": "sum",
     "wire_cap_pf": "sum", "cell_cap_pf": "sum", "area": "sum", "cell_count": "sum", "wire_length_um": "sum",
     "bits_per_cycle": "sum", "net_count": "sum", "violating_endpoints": "sum", "tns_ps": "sum",
     "activity": "mean", "fanout": "mean", "avg_net_length_um": "mean", "cg_efficiency": "mean",
@@ -82,6 +90,8 @@ METRIC_AGG = {
 }
 
 PERF_METRICS = tuple(SOURCE_METRICS["perf"])
+PROFILE_METRICS = tuple(SOURCE_METRICS["power_profile"])
+PROFILE_SOURCE = power_profile.SOURCE
 DESIGN_LEVEL_METRICS = tuple(SOURCE_METRICS["metadata"])
 
 
@@ -92,4 +102,4 @@ def metrics_with_scope(*keys: str) -> tuple[str, ...]:
 
 
 __all__ = ["SOURCES", "SOURCE_SPECS", "SourceSpec", "STAGE_OF_SOURCE", "SOURCE_METRICS", "METRIC_SCOPE", "METRIC_AGG", "PERF_METRICS",
-           "DESIGN_LEVEL_METRICS", "metrics_with_scope"]
+           "PROFILE_METRICS", "PROFILE_SOURCE", "DESIGN_LEVEL_METRICS", "metrics_with_scope"]

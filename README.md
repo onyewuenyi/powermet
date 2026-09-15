@@ -12,13 +12,15 @@ directory you can delete to start over. Python 3.11+.
 
 A battle-tested set of abstractions and a general workflow, built from public knowledge and current
 tools, that can be applied to a company's power methodology in its own compute and execution
-environment for accelerator, GPU, ASIC or SoC projects. It was developed on a CPU program; the unit
+environment for accelerator, GPU, ASIC or SoC projects. The reference setup is CPU-style (separate FE/BE
+hierarchies with a map, partition-level timing), but the unit
 of analysis (`fub`), the workloads and the data-movement terms are deliberately generic so the same
 pipeline transfers. Environment limitations are expected: they are absorbed by adapters, config and
 the files under `templates/`, not by the core abstractions. `docs/portability.md` lists what is
 expected to change, where it lands, and how the workflow stays current as signoff engines and
 activity flows change; `docs/tool-landscape.md` is the reference of current Synopsys, Cadence, Keysight
-and data/AI tools per methodology stage, each to be confirmed at the target company. `powermet sources` shows every adapter with the tool family and versions it
+and data/AI tools per methodology stage, each to be confirmed at the target company. `docs/ppa-convergence-playbook.md`
+is the milestone-by-milestone playbook for driving power to target with timing and area as constraints. `powermet sources` shows every adapter with the tool family and versions it
 was written against.
 
 | Version | Question it answers | Commands |
@@ -29,7 +31,8 @@ was written against.
 | **V3** | Can I answer workload / design what-if questions? | `workload summary`, `explore sweep/opmap/scenario`, `model export`, `integrate trace` |
 | **Timing** | What physical changes improve timing but hurt power? | `analyze deltas`, `analyze frontier`, timing-feasible `explore` |
 | **Closure** | Are we within budget at this milestone, is the power intent consistent, can I trust this engine? | `budget check`, `intent show`, `qualify`, `analyze hotspots` |
-| **Convergence** | Will the design hit its CdynTot and LkgPwr targets, and which techniques close the gap? | `converge --plan`, `techniques assess` |
+| **Analysis** | Which numbers are wrong for what the block is doing, what is the bug, who owns it, did the fix land? Which window sets the peak? | `analyze anomalies`, `analyze profile` (`docs/power-analysis.md`) |
+| **Convergence** | Will the design hit its Cdyn and leakage power targets, and which techniques close the gap? | `converge --plan`, `techniques assess` |
 
 ## Install
 
@@ -62,8 +65,11 @@ powermet explore sweep --design GPU_A --workload compute --param frequency_ghz -
 powermet explore opmap --design GPU_A --add "v=0.78,f=2.3"
 powermet explore scenario examples/scenarios/gpu_a.toml
 powermet budget check --history               # budgets per design/partition vs milestone tolerance; ON TRACK / AT RISK / OVER
-powermet converge --plan                      # CdynTot / LkgPwr / total targets: gap, trend, builds-to-target, ranked closure plan
+powermet converge --plan                      # Cdyn / leakage power / total targets: gap, trend, builds-to-target, ranked closure plan
 powermet analyze hotspots --design GPU_A      # share, power density, growth vs previous build, clock-gating efficiency
+powermet analyze anomalies --design GPU_A     # comparative analysis: power bugs (idle power, power vs activity, unexplained regressions,
+                                              #   clock-dominant, replica divergence, leakage share) with owner, evidence, new/persisting/cleared
+powermet analyze profile --design GPU_A       # time-based profile per workload: peak window, peak/avg, max step, energy, vs averaged report
 powermet qualify --a be_mw --b be_voltus_mw   # engine-to-engine qualification with a tolerance and PASS/FAIL
 powermet intent show                          # UPF domains per FUB, missing domains, voltage mismatches
 powermet model export                         # compact JSON power model for a performance simulator
@@ -78,7 +84,7 @@ powermet ingest plan mock_runs | sh           # scheduler fan-out: one worker jo
 powermet ingest merge                         # single-writer merge of partitions into the dataset and catalog
 powermet db tables                            # SQLite metadata catalog; `db query "<sql>" [--engine duckdb]`
 powermet profile show
-powermet report                               # .powermet/reports/power_metrology_report.md (24 sections)
+powermet report                               # .powermet/reports/power_metrology_report.md (30 sections)
 ```
 
 The V0 flat-file path still works: `powermet demo generate`, `powermet data validate <file>`,
@@ -91,9 +97,11 @@ The V0 flat-file path still works: `powermet demo generate`, `powermet data vali
 ```
 <root>/<design>/<build>/
   metadata.json                           design, build, date, run_id, status, tool versions, operating points (V, f)
-  mapping/fub_map.csv                     fub, model_root, partition, fe_hier, synth_object, be_hier
+  mapping/fub_map.csv                     fub, model_root, partition, fe_hier, synth_object, be_hier[, owner]
   pprtl/<wl>_<op>/{rtl,physical}_power.rpt   FE logical / FE physical power per FE hierarchy
   primepower/<wl>_<op>/power_hier.rpt     BE power per BE hierarchy (indented report_power -hierarchy style)
+  primepower/<wl>_<op>/power_groups.rpt   BE power per BE hierarchy by cell group: clock network, register, combinational, memory (optional)
+  primepower/<wl>_<op>/power_profile.csv  design power per time window, time-based mode or emulator profile (optional)
   primetime/<op>/timing_summary.rpt       period, WNS, TNS, violating endpoints per PARTITION (inherited by its FUBs)
   starrc/parasitics_summary.rpt           wire cap / pin cap per BE hierarchy
   implementation/qor_summary.rpt          area, cell count, fanout, wire length, avg net length per BE hierarchy
@@ -106,7 +114,8 @@ The V0 flat-file path still works: `powermet demo generate`, `powermet data vali
 ```
 
 **Activity.** The source of truth for switching activity is the RTL simulation FSDB per workload
-(logical hierarchy). The existing FSDB → SAIF flow (Verdi) takes the workload FSDB, the core, the FE/BE
+(logical hierarchy). An FSDB → SAIF step (Verdi `fsdb2saif`, or the simulator's own SAIF dump) plus a
+hierarchy-mapping step takes the workload FSDB, the core, the FE/BE
 mapping data and the partition list, and writes a SAIF in the back-end physical hierarchy; that same SAIF
 drives SAIF-based power optimization in early Fusion Compiler. powermet reads that SAIF directly: per
 instance, `activity` = mean toggles per cycle per net, `bits_per_cycle` = total toggles per cycle, with the
@@ -182,13 +191,13 @@ long provenance table. See `docs/extractors.md`.
   needed); `techniques assess` ranks candidate FUBs and estimates savings under stated assumptions, and says
   which source would enable the techniques it cannot assess (`docs/power-techniques.md`).
 - **Power convergence**: the thing the whole flow drives. Targets are set per milestone on the design-owned
-  quantities, not just total power: **CdynTot** (`cdyn_pf`, effective switched capacitance = dynamic power with
-  V²f divided out, so it compares FE to BE, build to build and corner to corner) and **LkgPwr**
+  quantities, not just total power: **Cdyn** (`cdyn_pf`, effective switched capacitance = dynamic power with
+  V²f divided out, so it compares FE to BE, build to build and corner to corner) and **leakage power**
   (`be_leakage_mw`, tracked separately because its levers and corner sensitivity differ). PrimePower and PPRTL
   leakage columns are kept as `be_leakage_mw` / `fe_leakage_mw`; `sanitize` flags leakage that exceeds the total or
   varies with the workload. `converge` reports gap, cut needed, trend and builds-to-target with a
   CONVERGED / CONVERGING / FLAT / DIVERGING verdict; `converge --plan` ranks the techniques that move the target's
-  component (dynamic levers for a CdynTot gap, leakage levers for LkgPwr, corner changes never counted against a
+  component (dynamic levers for a Cdyn gap, leakage levers for leakage power, corner changes never counted against a
   fixed-corner target) by the share of the gap each covers (`docs/methodology.md`, "Power convergence").
 - **Power closure**: `budget check` tracks budgets per design / partition / FUB against a per-milestone
   tolerance with trend, FUB coverage and the model's error band; `intent show` verifies UPF domains and

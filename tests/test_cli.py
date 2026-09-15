@@ -140,7 +140,7 @@ def test_closure_cli(workdir, capsys):
     assert run("db", "query", "SELECT COUNT(*) n FROM budget_status") == 0
     assert run("converge", "--plan", "--top", "3") == 0
     out = capsys.readouterr().out
-    assert "POWER CONVERGENCE" in out and "CdynTot" in out and "LkgPwr" in out and "Verdict" in out
+    assert "POWER CONVERGENCE" in out and "Cdyn" in out and "Leakage" in out and "Verdict" in out
     assert run("db", "query", "SELECT DISTINCT metric FROM budget_status") == 0
     assert "cdyn_pf" in capsys.readouterr().out
 
@@ -170,3 +170,28 @@ def test_profiles_techniques_methodology_cli(workdir, capsys):
     assert run("sanitize") == 0
     assert run("techniques", "assess", "--design", "GPU_A", "--top", "3") == 0
     assert "Clock gating" in capsys.readouterr().out
+
+
+def test_analysis_cli(workdir, capsys):
+    assert run("mock", "generate", "--designs", "2", "--builds", "5", "--fubs", "12",
+               "--workloads", "idle,typical,compute", "--operating-points", "nom") == 0
+    assert run("ingest", "scan", "mock_runs") == 0
+    assert run("sanitize") == 0
+    capsys.readouterr()
+    assert run("analyze", "anomalies", "--list-rules") == 0
+    assert "idle_dynamic" in capsys.readouterr().out
+    assert run("analyze", "anomalies", "--design", "GPU_A") == 0
+    out = capsys.readouterr().out
+    assert "Power anomalies" in out and "By owner" in out and "rtl-" in out
+    assert run("analyze", "anomalies", "--strict") == 1          # planted high-severity bugs are open
+    capsys.readouterr()
+    assert run("analyze", "anomalies", "--rule", "leakage_share,creeping_growth", "--owner", "rtl-pcore0") == 0
+    assert run("analyze", "anomalies", "--rule", "nope") == 1
+    capsys.readouterr()
+    assert run("analyze", "profile", "--design", "GPU_A") == 0
+    out = capsys.readouterr().out
+    assert "Peak-power vector" in out and "compute" in out
+    assert run("db", "query", "SELECT COUNT(*) n FROM anomaly") == 0
+    assert run("report") == 0
+    text = (workdir / ".powermet" / "reports" / "power_metrology_report.md").read_text()
+    assert "## 29. Comparative analysis" in text and "## 30. Workload power profiles" in text

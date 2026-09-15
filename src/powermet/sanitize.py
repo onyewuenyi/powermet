@@ -18,7 +18,7 @@ from powermet.extract import SOURCE_METRICS
 from powermet.extract.base import CANONICAL_UNITS
 from powermet.ingest import write_table
 from powermet.lineage import BLOCKING_ISSUES, PHYSICAL_REQUIRED, TIMING_ISSUES
-from powermet.schema import KEY_COLUMNS, NON_NEGATIVE_COLUMNS, REQUIRED_POWER_COLUMNS
+from powermet.schema import KEY_COLUMNS, NON_NEGATIVE_COLUMNS, POWER_GROUP_COLUMNS, REQUIRED_POWER_COLUMNS
 from powermet.storage import load_dataset, load_table, register_views, sanitized_path
 from powermet.textfmt import fmt_int, fmt_pct
 from powermet.validation import outlier_masks
@@ -46,6 +46,7 @@ CHECKS: dict[str, tuple[str, bool]] = {
     "intent_mismatch": ("UPF voltage != operating point voltage", False),
     "unmapped_objects": ("Unmapped report objects", False),
     "leakage_suspect": ("Leakage > total or varies with workload (component mismatch)", False),
+    "group_sum_mismatch": ("Power groups do not sum to BE total (> 5%)", False),
 }
 BLOCKING_LINEAGE = BLOCKING_ISSUES
 TIMING_LINEAGE = TIMING_ISSUES
@@ -152,7 +153,7 @@ def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, li
 
     # 4b leakage component sanity: leakage above the total, or leakage that changes with the workload at a fixed
     #    operating point, means the components were read from different scenarios or columns (the convergence
-    #    metrics CdynTot / LkgPwr depend on this split). A high leakage share by itself is legitimate at idle.
+    #    metrics Cdyn / leakage power depend on this split). A high leakage share by itself is legitimate at idle.
     if "be_leakage_mw" in df.columns:
         lk = pd.to_numeric(df["be_leakage_mw"], errors="coerce")
         bad = np.array((lk > num["be_mw"] * 1.001).fillna(False).to_numpy(), dtype=bool)   # writable copy
@@ -164,6 +165,17 @@ def sanitize(df: pd.DataFrame, cfg: Config, long: pd.DataFrame | None = None, li
         mark("leakage_suspect", bad)
     else:
         mark("leakage_suspect", np.zeros(n, dtype=bool))
+
+    # 4c power groups: when a groups report is present its clock / register / combinational / memory columns
+    #    should reconstruct the BE total; a larger gap means the group report came from another run or netlist
+    gcols = [c for c in POWER_GROUP_COLUMNS if c in df.columns]
+    if gcols:
+        gsum = sum(pd.to_numeric(df[c], errors="coerce").fillna(0.0) for c in gcols)
+        has = pd.concat([pd.to_numeric(df[c], errors="coerce") for c in gcols], axis=1).notna().any(axis=1)
+        gap = ((gsum - num["be_mw"]).abs() / num["be_mw"].where(num["be_mw"] > 0)) * 100
+        mark("group_sum_mismatch", (has & (gap > cfg.group_sum_tol_pct)).fillna(False).to_numpy())
+    else:
+        mark("group_sum_mismatch", np.zeros(n, dtype=bool))
 
     # 5 near-zero denominators
     mark("near_zero_be", (num["be_mw"].abs() < cfg.near_zero_mw).fillna(False).to_numpy())

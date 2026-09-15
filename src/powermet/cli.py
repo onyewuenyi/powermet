@@ -595,7 +595,7 @@ def cmd_db_tables(args: argparse.Namespace) -> int:
     print()
     print(table(["Table", "Rows"], rows))
     print()
-    print("Parquet tables (DuckDB views): measurements, measurements_sanitized, measurements_long, lineage, unmapped, performance, quality_flags")
+    print("Parquet tables (DuckDB views): measurements, measurements_sanitized, measurements_long, lineage, unmapped, performance, power_intent, power_profile, quality_flags")
     return 0
 
 
@@ -1091,6 +1091,60 @@ def cmd_analyze_hotspots(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze_anomalies(args: argparse.Namespace) -> int:
+    from powermet.anomalies import RULES, anomalies, render_anomalies, render_rules
+    from powermet.catalog import record_anomalies
+    from powermet.textfmt import heading
+
+    if args.rules_list:
+        print(render_rules())
+        return 0
+    project, cfg, df = _load(args)
+    designs = [args.design] if args.design else sorted(df["design"].astype(str).unique())
+    keys = [k.strip() for k in args.rule.split(",")] if args.rule else None
+    if keys:
+        bad = [k for k in keys if k not in RULES]
+        if bad:
+            raise CliError(f"unknown rule(s) {bad}; see --list-rules")
+    print(heading("Comparative power analysis: anomalies and power bugs"))
+    print()
+    all_f = []
+    for d in designs:
+        try:
+            rep = anomalies(df, cfg, d, args.build, args.workload, args.operating_point, keys)
+        except ValueError as exc:
+            raise CliError(str(exc))
+        print(render_anomalies(rep, top=args.top, owner=args.owner))
+        print()
+        all_f.extend(rep.findings)
+    if all_f and not args.no_record:
+        record_anomalies(project, all_f)
+    return 0 if not (args.strict and any(f.severity == "high" for f in all_f)) else 1
+
+
+def cmd_analyze_profile(args: argparse.Namespace) -> int:
+    from powermet.storage import load_table
+    from powermet.textfmt import heading
+    from powermet.timeprofile import render_profile, summarize_profile
+
+    project, cfg, df = _load(args)
+    prof = load_table(project, "power_profile")
+    if not len(prof):
+        raise CliError("no power profile ingested (optional source power_profile: primepower/<wl>_<op>/power_profile.csv)")
+    perf = load_table(project, "performance")
+    designs = [args.design] if args.design else sorted(prof["design"].astype(str).unique())
+    print(heading("Workload power profiles (time-based)"))
+    print()
+    for d in designs:
+        try:
+            s_ = summarize_profile(prof, d, args.build, wide=df, perf=perf, tolerance_pct=cfg.anomaly_profile_tol_pct)
+        except ValueError as exc:
+            raise CliError(str(exc))
+        print(render_profile(s_))
+        print()
+    return 0
+
+
 def cmd_qualify(args: argparse.Namespace) -> int:
     from powermet.qualify import qualify, render_qualification
 
@@ -1218,6 +1272,24 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--operating-point", default=None)
     a.add_argument("--top", type=int, default=10)
     a.set_defaults(func=cmd_analyze_hotspots)
+    a = an_sub.add_parser("anomalies", help="Comparative analysis: power bugs (idle power, power vs activity, unexplained regressions, "
+                                             "clock-dominant, replica divergence, leakage share) with owner and evidence.")
+    a.add_argument("--design", default=None)
+    a.add_argument("--build", default=None)
+    a.add_argument("--workload", default=None, help="reference workload (default typical)")
+    a.add_argument("--operating-point", default=None)
+    a.add_argument("--rule", default=None, help="comma-separated rule keys to run (default all)")
+    a.add_argument("--owner", default=None, help="show only findings owned by this team / engineer")
+    a.add_argument("--top", type=int, default=20)
+    a.add_argument("--list-rules", dest="rules_list", action="store_true", help="print the rule registry and exit")
+    a.add_argument("--no-record", action="store_true", help="do not write findings to the catalog")
+    a.add_argument("--strict", action="store_true", help="exit 1 when any high-severity finding is open")
+    a.set_defaults(func=cmd_analyze_anomalies)
+    a = an_sub.add_parser("profile", help="Time-based power profile per workload: average, peak window, peak/avg, max step, energy, "
+                                           "reconciliation with the averaged report.")
+    a.add_argument("--design", default=None)
+    a.add_argument("--build", default=None)
+    a.set_defaults(func=cmd_analyze_profile)
     a = an_sub.add_parser("frontier", help="Power x timing (Fmax) frontier across builds with Pareto classification.")
     a.add_argument("--design", default=None)
     a.add_argument("--workload", default=None)
@@ -1365,7 +1437,7 @@ def build_parser() -> argparse.ArgumentParser:
     b1.add_argument("--strict", action="store_true", help="Exit 1 when any budget is OVER.")
     b1.set_defaults(func=cmd_budget_check)
 
-    sp = sub.add_parser("converge", help="Power convergence: CdynTot / LkgPwr / total targets vs the latest build, trend, projection, closure plan.")
+    sp = sub.add_parser("converge", help="Power convergence: Cdyn / leakage power / total targets vs the latest build, trend, projection, closure plan.")
     sp.add_argument("--file", default=None, help="targets TOML (same file as budgets; entries carry metric = cdyn_pf | be_leakage_mw | be_mw)")
     sp.add_argument("--design", default=None)
     sp.add_argument("--metric", default=None, help="only targets on this metric")

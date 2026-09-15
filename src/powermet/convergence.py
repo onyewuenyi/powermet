@@ -3,18 +3,18 @@
 The targets a program signs up to are usually not one total-power number but a pair of design-owned
 quantities per milestone:
 
-* **CdynTot** (`cdyn_pf`): effective switched capacitance, dynamic power with V^2 f divided out.
+* **Cdyn** (`cdyn_pf`): effective switched capacitance, dynamic power with V^2 f divided out.
   It is independent of the corner the report was run at, so it compares FE to BE, build to build and
   corner to corner, and it is what RTL and physical changes actually move. mW / (V^2 GHz) is pF exactly.
-* **LkgPwr** (`be_leakage_mw`): leakage at the signoff corner. Tracked separately because its levers
+* **leakage power** (`be_leakage_mw`): leakage at the signoff corner. Tracked separately because its levers
   (Vt mix, power gating, area, memory sleep) and its sensitivity (V^3, temperature, process) differ
   from the dynamic ones, and because a total-power target lets one component hide the other.
 
 `converge()` places every target against the latest build with the milestone tolerance (budgets.py does
 the classification), then adds what closure needs: the gap in the metric's unit, the reduction required,
 the trend across builds and a projection of how many builds it takes at that rate. `plan()` ranks the
-technique assessments by how much of the gap each covers in the target's own component, so a CdynTot gap
-is answered with dynamic levers (clock gating, wire cap, ...) and a LkgPwr gap with leakage levers
+technique assessments by how much of the gap each covers in the target's own component, so a Cdyn gap
+is answered with dynamic levers (clock gating, wire cap, ...) and a leakage power gap with leakage levers
 (Vt swap, power gating, ...). The plan is a prioritisation under the techniques' stated assumptions,
 not a commitment: each line is an order-of-magnitude estimate to be confirmed with a what-if and the
 next build.
@@ -180,7 +180,7 @@ def render_convergence(items: list[Convergence]) -> str:
                  rows, ["l", "l", "l", "l", "l", "r", "r", "r", "r", "r", "r", "l", "l"]), ""]
     n = {v: sum(c.verdict == v for c in items) for v in VERDICTS}
     out.append(f"{len(items)} targets: " + ", ".join(f"{k} {n[k]}" for k in VERDICTS if n[k]) + ".")
-    out.append("CdynTot = (BE power - leakage) / (V^2 f) summed over the scope, in pF; LkgPwr = signoff leakage summed over the scope. "
+    out.append("Cdyn = (BE power - leakage) / (V^2 f) summed over the scope, in pF; leakage power = signoff leakage summed over the scope. "
                "Status applies the milestone tolerance; the verdict looks at the trend across builds toward the target itself.")
     return "\n".join(out)
 

@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS budget_status (
     checked_at TEXT, design TEXT, scope TEXT, workload TEXT, operating_point TEXT, build TEXT, milestone TEXT,
     budget_mw REAL, actual_mw REAL, tolerance_pct REAL, margin_pct REAL, status TEXT, metric TEXT
 );
+CREATE TABLE IF NOT EXISTS anomaly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    found_at TEXT, design TEXT, build TEXT, model_root TEXT, partition TEXT, owner TEXT, rule TEXT, severity TEXT,
+    value REAL, threshold REAL, status TEXT, evidence TEXT, technique TEXT
+);
 CREATE TABLE IF NOT EXISTS profile_run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command TEXT, started_at TEXT, total_wall_s REAL, peak_rss_mb REAL, python TEXT, stages TEXT
@@ -136,6 +141,18 @@ def record_budgets(project, statuses) -> None:
             "tolerance_pct, margin_pct, status, metric) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(_now(), s.budget.design, s.budget.scope, s.budget.workload, s.budget.operating_point, s.build, s.milestone,
               s.budget.target, s.actual, s.tolerance_pct, s.margin_pct, s.status, s.budget.metric) for s in statuses])
+
+
+def record_anomalies(project, findings) -> None:
+    """Persist one run of `analyze anomalies` (design, build) so the history of a power bug is queryable."""
+    with connect(project) as con:
+        for design, build in {(f.design, f.build) for f in findings}:
+            con.execute("DELETE FROM anomaly WHERE design = ? AND build = ?", (design, build))
+        con.executemany(
+            "INSERT INTO anomaly (found_at, design, build, model_root, partition, owner, rule, severity, value, threshold, status, "
+            "evidence, technique) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(_now(), f.design, f.build, f.model_root, f.partition, f.owner, f.rule, f.severity, f.value, f.threshold, f.status,
+              f.evidence, f.technique) for f in findings])
 
 
 def record_profile(project, d: dict) -> None:

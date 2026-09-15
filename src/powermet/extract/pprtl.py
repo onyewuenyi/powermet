@@ -15,7 +15,7 @@ Representative format (one file per workload x operating point; Mode header sele
     gpu_a_top/u_scheduler          40.123      35.111     5.223   80.457    0.82
 
 ClockGatingEff (optional) is the fraction of register clock pins gated, emitted as `cg_efficiency`.
-The Leakage column of the physical-aware report is emitted as `fe_leakage_mw` (FE estimate of LkgPwr).
+The Leakage column of the physical-aware report is emitted as `fe_leakage_mw` (FE leakage estimate).
 """
 
 from __future__ import annotations

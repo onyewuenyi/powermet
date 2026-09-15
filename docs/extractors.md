@@ -49,12 +49,12 @@ unit normalization), so replacing them with vendor-exact parsing is a local chan
   by `<top>/part_<partition>`; `object_kind = partition`, fanned out to every FUB of that partition by lineage.
 - PPRTL: `Mode: rtl | physical-aware` selects `fe_logical_mw` / `fe_physical_mw`; table columns
   `Hierarchy Internal Switching Leakage Total`.
-- PrimePower: `Power Units = 1W|1mW`; `Scenario: <workload>@<op>`; indented `name (ref) Int Switch Leak Total %`; Total → `be_mw`, Leak → `be_leakage_mw` (LkgPwr; dynamic and CdynTot derive from the pair), rows whose components do not sum to the total are noted
+- PrimePower: `Power Units = 1W|1mW`; `Scenario: <workload>@<op>`; indented `name (ref) Int Switch Leak Total %`; Total → `be_mw`, Leak → `be_leakage_mw` (leakage power; dynamic and Cdyn derive from the pair), rows whose components do not sum to the total are noted
   rows; full path rebuilt from indentation, top-level row skipped.
 - StarRC: `Capacitance units: pF|fF`; `Instance Nets TotalCap WireCap PinCap` → `wire_cap_pf`, `cell_cap_pf`.
 - Implementation: `Area units: um^2`; `Hierarchy CellArea CellCount AvgFanout Utilization [WireLength AvgNetLen]` →
   `area`, `cell_count`, `fanout`, optional `wire_length_um`, `avg_net_length_um` (data-movement distance proxy).
-- SAIF (`activity/<workload>.saif`): SAIF 2.0 as written by the FSDB → SAIF flow (Verdi) in the physical
+- SAIF (`activity/<workload>.saif`): SAIF 2.0 as written by an FSDB → SAIF step (Verdi `fsdb2saif` or equivalent) plus hierarchy mapping, in the physical
   hierarchy. Per instance (own nets + descendants): `activity` = mean TC / cycles, `bits_per_cycle` = sum TC / cycles,
   `net_count`; cycles = DURATION × TIMESCALE / `sim_clock_period_ps`. The clock period and the flow inputs
   (source FSDB per workload, core, mapping data, partition list, output hierarchy) come from `metadata.json`
@@ -77,3 +77,17 @@ its metrics.
 3. Add the metric to `schema.py` if it should be a column of the wide dataset, and to
    `pipeline.FUB_METRICS` (per-FUB) or `PERF_METRICS` (design-level).
 4. Have `mockdata.py` emit a representative file so the pipeline test covers it.
+
+## Optional analysis sources: power groups and time-based profile
+
+| Source | Pattern | Object | Metrics | What it enables |
+|---|---|---|---|---|
+| `power_groups` | `primepower/{workload}_{operating_point}/power_groups.rpt` | BE hierarchy | `be_clock_mw`, `be_register_mw`, `be_comb_mw`, `be_memory_mw` (+ derived `clock_fraction`) | where the dynamic power sits inside a FUB; the `clock_dominant` anomaly rule; sanitize `group_sum_mismatch` |
+| `power_profile` | `primepower/{workload}_{operating_point}/power_profile.csv` | design over time (`power_profile.parquet`, not the FUB dataset) | `profile_total_mw`, `profile_dynamic_mw`, `profile_leakage_mw` per window | `analyze profile`: peak window, peak/avg, max step, energy, reconciliation with the averaged report |
+
+Both are optional (an absent file is not an ingest error) and both are representative formats; the
+engine commands that produce them and the notes on emulator profiles are in `docs/power-analysis.md`.
+The groups parser reads its columns by name so extra groups (io, black_box) or a different order still
+parse; the profile parser accepts any `t_start_*` / `t_end_*` time unit and normalises to ns. The FUB map
+may also carry an optional `owner` column; it is not a source but it travels with the model root into
+every row.

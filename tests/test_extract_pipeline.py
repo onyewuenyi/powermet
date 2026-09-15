@@ -73,7 +73,7 @@ def test_primepower_units_and_paths(mock_root):
         merged = gen.assign(be_hier=gen["fub"].map(hier)).merge(rec, left_on="be_hier", right_on="object")
         assert len(merged) >= len(gen) - 3
         assert np.allclose(merged["be_mw"], merged["value"], rtol=2e-3)
-        assert np.allclose(merged["be_leakage_mw"], merged["object"].map(leak), rtol=2e-3)   # LkgPwr round-trips too
+        assert np.allclose(merged["be_leakage_mw"], merged["object"].map(leak), rtol=2e-3)   # leakage power round-trips too
 
 
 def test_pipeline_roundtrip_clean(tmp_path, clean_root):

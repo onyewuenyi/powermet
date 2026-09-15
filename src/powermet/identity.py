@@ -32,7 +32,7 @@ from typing import Iterable
 import pandas as pd
 
 FUB_MAP_REQUIRED = ("fub", "fe_hier", "synth_object", "be_hier")
-FUB_MAP_OPTIONAL = ("model_root", "partition", "be_share", "fe_share")
+FUB_MAP_OPTIONAL = ("model_root", "partition", "be_share", "fe_share", "owner")
 FUB_MAP_COLUMNS = FUB_MAP_REQUIRED + FUB_MAP_OPTIONAL
 
 # How a partition object in a BE/timing report is named relative to the partition id in the map.
@@ -117,10 +117,11 @@ class FubSpec:
     fe_hier: str
     synth_object: str
     be_hier: str                 # primary BE path (first map row); see ModelRoot.entries for all rows
+    owner: str | None = None     # team or engineer a finding on this FUB is driven to (optional map column)
 
     def as_row(self) -> dict:
         return {"fub": self.fub, "model_root": self.model_root, "partition": self.partition,
-                "fe_hier": self.fe_hier, "synth_object": self.synth_object, "be_hier": self.be_hier}
+                "fe_hier": self.fe_hier, "synth_object": self.synth_object, "be_hier": self.be_hier, "owner": self.owner}
 
 
 @dataclass(frozen=True)
@@ -217,8 +218,10 @@ class ModelRoot:
             part = d.get("partition")
             fe, be = str(d["fe_hier"]).strip(), str(d["be_hier"]).strip()
             if fub not in specs:
+                owner = d.get("owner")
                 specs[fub] = FubSpec(fub, str(root).strip() if _present(root) else fub,
-                                     str(part).strip() if _present(part) else None, fe, str(d["synth_object"]).strip(), be)
+                                     str(part).strip() if _present(part) else None, fe, str(d["synth_object"]).strip(), be,
+                                     str(owner).strip() if _present(owner) else None)
             elif _present(root) and specs[fub].model_root != str(root).strip():
                 raise ValueError(f"FUB {fub} has conflicting model_root values in the map")
             if any(e.spec.fub == fub and e.fe_hier == fe and e.be_hier == be for e in entries):

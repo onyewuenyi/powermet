@@ -53,6 +53,17 @@ class Config:
     stale_days: int = 120
     near_zero_mw: float = 0.01
     leakage_workload_tol_pct: float = 5.0   # leakage should not depend on the workload; larger spread per FUB/op flags a component mismatch
+    group_sum_tol_pct: float = 5.0          # clock + register + combinational + memory should reconstruct be_mw within this
+    # comparative analysis (analyze anomalies): thresholds per rule; see anomalies.RULES and docs/power-analysis.md
+    idle_workload: str = "idle"
+    anomaly_idle_ratio: float = 0.35        # idle dynamic power / reference-workload dynamic power above this = clocks not gated at idle
+    anomaly_eff_ratio: float = 2.0          # dynamic power per unit activity*C*V^2f above this multiple of the design median
+    anomaly_regression_pct: float = 10.0    # build-to-build dynamic growth beyond what activity x capacitance explains, above this = unexplained
+    anomaly_clock_fraction: float = 0.5     # clock-network share of dynamic power above this = clock dominant
+    anomaly_creep_builds: int = 3           # consecutive rising builds ...
+    anomaly_creep_pct: float = 15.0         # ... with this cumulative growth = creeping
+    anomaly_replica_ratio: float = 1.3      # max/min dynamic power across replica instances above this = divergent replicas
+    anomaly_profile_tol_pct: float = 5.0    # time-based profile average vs averaged report beyond this = profile mismatch
     unit_magnitude_ratio: float = 50.0
     use_sanitized: bool = True
 

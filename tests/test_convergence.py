@@ -1,4 +1,4 @@
-"""Power convergence: leakage component through the adapters, CdynTot / LkgPwr derived metrics, targets on any
+"""Power convergence: leakage component through the adapters, Cdyn / leakage power derived metrics, targets on any
 convergence metric, trend / projection verdicts, and closure plans that only count the techniques that move
 the target's component."""
 
@@ -82,7 +82,7 @@ def test_targets_on_any_convergence_metric(tmp_path, project):
                     '[[budget]]\ndesign = "GPU_A"\nscope = "design"\nbe_leakage_mw = 1.0\n')             # metric-name shorthand
     budgets = load_budgets(toml)
     assert [b.metric for b in budgets] == ["be_mw", "cdyn_pf", "be_leakage_mw"] and budgets[0].target == 1.0 and budgets[0].be_mw == 1.0
-    assert budgets[1].short_metric == "CdynTot" and budgets[1].unit == "pF"
+    assert budgets[1].short_metric == "Cdyn" and budgets[1].unit == "pF"
     (tmp_path / "bad.toml").write_text('[[budget]]\ndesign="X"\nmetric="area"\ntarget=1\n')
     with pytest.raises(ValueError, match="not a convergence metric"):
         load_budgets(tmp_path / "bad.toml")
@@ -107,7 +107,7 @@ def test_convergence_verdicts_and_projection(project):
     else:
         assert not np.isfinite(items[1].builds_to_target)
     text = render_convergence(items)
-    assert "CdynTot" in text and "LkgPwr" in text and "never at this trend" in text or "builds" in text
+    assert "Cdyn" in text and "Leakage" in text and "never at this trend" in text or "builds" in text
     # a synthetic history that decreases steadily is CONVERGING with a finite projection
     hist = pd.DataFrame({"build": ["B001", "B002", "B003"], "milestone": ["signoff"] * 3, "actual": [130.0, 120.0, 110.0],
                          "tolerance_pct": [0.0] * 3, "margin_pct": [0.0] * 3, "status": ["OVER"] * 3})
@@ -164,4 +164,4 @@ def test_plan_counts_only_the_techniques_that_move_the_component(project):
 def test_techniques_catalog_states_what_each_moves():
     assert BY_KEY["clock_gating"].reduces == "dynamic" and BY_KEY["dvfs"].reduces == "corner" and BY_KEY["vt_swap"].reduces == "leakage"
     from powermet.techniques import render_catalog
-    assert "CdynTot" in render_catalog() and "LkgPwr" in render_catalog()
+    assert "Cdyn" in render_catalog() and "Leakage" in render_catalog()

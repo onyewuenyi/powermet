@@ -40,6 +40,11 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("fe_logical_mw", "float", POWER, required=True, non_negative=True, description="FE logical power estimate (mW)"),
     ColumnSpec("fe_physical_mw", "float", POWER, required=True, non_negative=True, description="FE physically-aware power estimate (mW)"),
     ColumnSpec("be_mw", "float", POWER, required=True, non_negative=True, description="BE signoff power (mW)"),
+    # BE power by cell group (optional; from a `report_power -hierarchy -groups` style report): where the dynamic power sits
+    ColumnSpec("be_clock_mw", "float", POWER, non_negative=True, description="BE power in the clock network (mW)"),
+    ColumnSpec("be_register_mw", "float", POWER, non_negative=True, description="BE power in sequential cells (mW)"),
+    ColumnSpec("be_comb_mw", "float", POWER, non_negative=True, description="BE power in combinational cells (mW)"),
+    ColumnSpec("be_memory_mw", "float", POWER, non_negative=True, description="BE power in memory macros (mW)"),
     ColumnSpec("fe_leakage_mw", "float", POWER, non_negative=True, description="FE physically-aware leakage power estimate (mW)"),
     ColumnSpec("be_leakage_mw", "float", POWER, non_negative=True, description="BE signoff leakage power (mW); BE dynamic = be_mw - be_leakage_mw"),
     ColumnSpec("be_voltus_mw", "float", FEATURE, non_negative=True, description="BE power from the alternate signoff engine (mW), for qualification"),
@@ -74,10 +79,12 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec("milestone", "str", PROVENANCE, description="Design milestone of the build (rtl, synthesis, placement, route, signoff)"),
     ColumnSpec("be_activity_mode", "str", PROVENANCE, description="Activity source of the BE power number: saif/fsdb (vector-based) or vectorless"),
     ColumnSpec("power_domain", "str", PROVENANCE, description="UPF power domain the FUB belongs to"),
+    ColumnSpec("owner", "str", PROVENANCE, description="Owner of the FUB (team or engineer) from the FUB map; who a finding is driven to"),
 )
 
 DERIVED_COLUMNS: tuple[str, ...] = (
     "be_dynamic_mw",
+    "clock_fraction",
     "cdyn_pf",
     "fe_cdyn_pf",
     "leakage_fraction",
@@ -99,10 +106,10 @@ FE_ESTIMATE_COLUMNS = ("fe_logical_mw", "fe_physical_mw")
 # builds and FE/BE; leakage is tracked separately because its levers (Vt, gating, area) and its corner
 # sensitivity (V^3, temperature) differ from the dynamic ones.
 CONVERGENCE_METRICS: dict[str, tuple[str, str, str]] = {          # metric -> (short name, unit, component)
-    "cdyn_pf": ("CdynTot", "pF", "dynamic"),
-    "be_leakage_mw": ("LkgPwr", "mW", "leakage"),
-    "be_dynamic_mw": ("DynPwr", "mW", "dynamic"),
-    "be_mw": ("TotPwr", "mW", "total"),
+    "cdyn_pf": ("Cdyn", "pF", "dynamic"),
+    "be_leakage_mw": ("Leakage", "mW", "leakage"),
+    "be_dynamic_mw": ("Dynamic", "mW", "dynamic"),
+    "be_mw": ("Total", "mW", "total"),
 }
 METRIC_UNITS: dict[str, str] = {"be_mw": "mW", "be_dynamic_mw": "mW", "be_leakage_mw": "mW", "fe_leakage_mw": "mW",
                                 "fe_logical_mw": "mW", "fe_physical_mw": "mW", "cdyn_pf": "pF", "fe_cdyn_pf": "pF",
@@ -120,6 +127,7 @@ KEY_COLUMNS = ("design", "build", "fub", "stage", "workload", "operating_point")
 
 TARGET = "be_mw"
 PAIRED_STAGE = "FE_BE"
+POWER_GROUP_COLUMNS = ("be_clock_mw", "be_register_mw", "be_comb_mw", "be_memory_mw")
 # Metrics the ingest pipeline pivots into the wide FUB dataset (fmax_ghz is derived, not ingested).
 FUB_METRICS = tuple(c for c in POWER_COLUMNS + FEATURE_COLUMNS + TIMING_COLUMNS if c != "fmax_ghz")
 
@@ -134,10 +142,16 @@ LABELS: dict[str, str] = {
     "fe_physical_mw": "FE Physical Power",
     "be_mw": "BE Power",
     "be_leakage_mw": "BE Leakage",
+    "be_clock_mw": "BE Clock-network Power",
+    "be_register_mw": "BE Register Power",
+    "be_comb_mw": "BE Combinational Power",
+    "be_memory_mw": "BE Memory Power",
+    "clock_fraction": "Clock Fraction of Dynamic",
+    "owner": "Owner",
     "be_dynamic_mw": "BE Dynamic Power",
     "fe_leakage_mw": "FE Leakage",
-    "cdyn_pf": "CdynTot",
-    "fe_cdyn_pf": "FE CdynTot",
+    "cdyn_pf": "Cdyn",
+    "fe_cdyn_pf": "FE Cdyn",
     "leakage_fraction": "Leakage Fraction",
     "wire_cap_pf": "Wire Cap",
     "cell_cap_pf": "Cell Cap",

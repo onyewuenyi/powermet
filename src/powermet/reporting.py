@@ -360,6 +360,57 @@ def _closure_sections(project: Project, cfg: Config, df: pd.DataFrame) -> list[s
             L.append("")
     except Exception as exc:
         L.append(f"_Hotspot analysis unavailable: {exc}_")
+    L.append("")
+
+    L.append("## 29. Comparative analysis: anomalies and power bugs")
+    L.append("")
+    try:
+        from powermet.anomalies import anomalies
+        any_f = False
+        for d in sorted(df["design"].astype(str).unique()):
+            rep = anomalies(df, cfg, d)
+            if not rep.findings:
+                continue
+            any_f = True
+            L.append(f"**{d} / {rep.build}** (reference {rep.workload}/{rep.operating_point}" + (f", vs {rep.prev_build}" if rep.prev_build else "") + ")")
+            L.append("")
+            L.append(_md_table(["Model root", "Owner", "Rule", "Severity", "Status", "Evidence"],
+                               [[f.model_root, f.owner or "-", f.rule, f.severity, f.status, f.evidence] for f in rep.findings[:8]]))
+            if len(rep.findings) > 8:
+                L.append(f"_{len(rep.findings)} findings in total; `powermet analyze anomalies --design {d}` for the full list._")
+            L.append("")
+        if not any_f:
+            L.append("_No anomalies at the reference workload and corner._")
+        L.append("Rules compare a FUB with what should agree with it (idle vs busy, peers at the same activity and capacitance, its previous "
+                 "builds, its replicas, its own clock-network share). Findings are associations to confirm in RTL or the flow; the owner "
+                 "column comes from the FUB map.")
+    except Exception as exc:
+        L.append(f"_Anomaly analysis unavailable: {exc}_")
+    L.append("")
+
+    L.append("## 30. Workload power profiles (time-based)")
+    L.append("")
+    prof = load_table(project, "power_profile")
+    if len(prof):
+        try:
+            from powermet.timeprofile import summarize_profile
+            perf = load_table(project, "performance")
+            for d in sorted(prof["design"].astype(str).unique()):
+                s_ = summarize_profile(prof, d, wide=df, perf=perf, tolerance_pct=cfg.anomaly_profile_tol_pct)
+                L.append(f"**{d} / {s_.build}**")
+                L.append("")
+                L.append(_md_table(["Workload", "Op", "Average", "Peak", "Peak/avg", "Peak window (ns)", "Energy", "vs averaged report"],
+                                   [[r.workload, r.operating_point, fmt_mw(r.avg_mw), fmt_mw(r.peak_mw), f"{r.peak_to_avg:.2f}",
+                                     f"{r.peak_t_start_ns:,.0f}-{r.peak_t_end_ns:,.0f}", f"{r.energy_uj:,.1f} uJ",
+                                     (fmt_pct(r.avg_gap_pct, True) + ("" if r.profile_ok else " MISMATCH")) if np.isfinite(r.avg_gap_pct) else "n/a"]
+                                    for r in s_.table.itertuples()]))
+                L.append("")
+            L.append("The peak window is the vector for IR / thermal signoff; the average is the energy number. A profile whose average "
+                     "disagrees with the averaged hierarchical report came from a different netlist, parasitics or activity window.")
+        except Exception as exc:
+            L.append(f"_Profile analysis unavailable: {exc}_")
+    else:
+        L.append("_No time-based power profile ingested (optional `power_profile` source)._")
     return L
 
 

@@ -3,8 +3,8 @@
 ## Why this project exists
 
 powermet is a battle-tested set of abstractions and a general workflow for power metrology and
-modeling, built from public knowledge and current tools and patterns. It was developed on a CPU
-program (the author's current team) but the target is any accelerator, GPU, ASIC or SoC power
+modeling, built from public knowledge and current tools and patterns. The reference setup is
+CPU-style (separate FE/BE hierarchies, partition-level timing) but the target is any accelerator, GPU, ASIC or SoC power
 methodology: at a new company the pieces get applied where a methodology already exists, or the
 whole workflow gets implemented where it does not. It is also a proof of concept for roles such as
 SoC power analysis and optimization or power methodology and modeling engineering, where the
@@ -76,3 +76,21 @@ and continuous improvement across tape-outs. powermet covers each with one small
 | Improve signoff accuracy and turnaround; systemic opportunities across tape-outs | per-stage runtime / memory profiles, metric trust across builds, build deltas and the power x timing frontier | `profiling.py`, `sanitize.metric_quality`, `deltas.py`, `frontier.py` |
 | Low-power techniques (clock gating, power gating, multi-Vdd, DVFS) | `cg_efficiency` per FUB, UPF domains and states, DVFS curve and operating-point maps in `explore` | `hotspots.py`, `intent.py`, `curves.py` |
 | Multiple concurrent projects, vendor tool evaluation | one catalog across designs with `design_type`; `powermet sources` lists tool families and versions each adapter was written against | `catalog.py`, `cli.cmd_sources` |
+
+## Power analysis (from a power methodology *and analysis* role)
+
+The analysis half of a power methodology team analyses fullchip and unit-level power data every build,
+performs comparative analysis to spot trends and anomalies, helps architects and RTL designers interpret
+their power data and identify power bugs, and drives them to implement fixes. powermet covers each:
+
+| Responsibility | powermet piece | Where |
+|---|---|---|
+| Comparative power analysis to spot trends and anomalies that warrant scrutiny | `analyze anomalies`: rule registry (idle dynamic, power vs activity, unexplained regression net of activity x capacitance, creeping growth, clock dominant, replica divergence, leakage share) with thresholds in config, evidence per finding, new / persisting / cleared vs the previous build | `anomalies.py`, `config.anomaly_*`, catalog `anomaly` |
+| Help designers interpret power data and identify power bugs; drive fixes | each finding names the class of bug, the technique that usually addresses it, and the **owner** from the FUB map; the per-owner summary is the list to drive; `--strict` gates a nightly flow; a finding that clears in the next build is the fix landing | `anomalies.py`, `owner` in `fub_map.csv` |
+| Fullchip and unit-level power data by category | power-groups source: clock network / register / combinational / memory per FUB, `clock_fraction`; sanitize checks the groups reconstruct the total | `extract/power_groups.py`, `sanitize.CHECKS["group_sum_mismatch"]` |
+| Early insight into the energy of graphics / AI workloads | time-based profile per workload: peak window, peak/avg, max step, energy, pJ/op, reconciliation with the averaged report; emulator profiles accepted in the same shape | `extract/power_profile.py`, `timeprofile.py`, `analyze profile` |
+| Continuously improve the efficiency of the analysis tools themselves | per-stage runtime and memory profiles, scheduler fan-out, single-writer catalog | `profiling.py`, `pipeline.plan_jobs` |
+| Best practices, automation | the per-build loop in `docs/ppa-convergence-playbook.md`; everything is a CLI command with a Markdown report | `cli.py`, `reporting.py` |
+
+`docs/power-analysis.md` lists the EDA reports each piece needs (PrimePower groups report, time-based
+mode or an emulator profile) and how to point the adapters at them.

@@ -6,6 +6,7 @@ Every stage is profiled. Outputs under .powermet/data/processed/:
     lineage.parquet           FUB lineage chain per design/build with mismatch flags
     unmapped.parquet          report objects that could not be mapped to a FUB
     performance.parquet       design-level performance per build/workload/op (V3)
+    power_profile.parquet     design power per time window per build/workload/op (time-based analysis)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 from powermet.config import Config, Project
-from powermet.extract import DESIGN_LEVEL_METRICS, METRIC_AGG, METRIC_SCOPE, PERF_METRICS, SOURCES
+from powermet.extract import DESIGN_LEVEL_METRICS, METRIC_AGG, METRIC_SCOPE, PERF_METRICS, PROFILE_METRICS, PROFILE_SOURCE, SOURCES
 from powermet.extract.base import ParseError, ParsedReport
 from powermet.extract.metadata import inputs_from_metadata
 from powermet.identity import IdentityStrategy, ModelRoot
@@ -50,6 +51,7 @@ class RunResult:
     status: str = "current"
     intent: pd.DataFrame = field(default_factory=pd.DataFrame)
     report_rows: list[dict] = field(default_factory=list)     # serialisable provenance per parsed file (set on save/load)
+    profile: pd.DataFrame = field(default_factory=pd.DataFrame)   # time-based power profile rows (design over time, not FUB)
 
     def source_rows(self) -> list[dict]:
         """Per-file provenance for the catalog; computed from parsed reports or restored from a partition."""
@@ -64,7 +66,7 @@ class RunResult:
         return rows
 
     # ---- partition I/O: one directory per run, Parquet only (no catalog, no locks) -> scheduler-safe
-    TABLES = ("wide", "long", "perf", "lineage", "unmapped", "intent")
+    TABLES = ("wide", "long", "perf", "lineage", "unmapped", "intent", "profile")
 
     def save_partition(self, out_dir: Path) -> Path:
         import json
@@ -92,7 +94,7 @@ class RunResult:
             tables[name] = pd.read_parquet(p) if p.exists() else pd.DataFrame()
         return cls(meta["design"], meta["build"], Path(meta["run_dir"]), [], tables["long"], tables["wide"], tables["perf"],
                    tables["lineage"], tables["unmapped"], list(meta.get("flags", [])), list(meta.get("errors", [])),
-                   meta.get("status", "current"), tables["intent"], list(meta.get("reports", [])))
+                   meta.get("status", "current"), tables["intent"], list(meta.get("reports", [])), tables["profile"])
 
 
 @dataclass
@@ -152,7 +154,8 @@ def extract_run(run_dir: Path, cfg: Config, prof: Profiler | None = None) -> Run
             reports = [r for r in reports if r.path.name not in bad]
 
     with prof.stage("normalization", detail=f"{design}/{build}") as st:
-        long = _normalize(reports, design, build, meta)
+        profile = pivot_profile_records([r for r in reports if r.source == PROFILE_SOURCE], design, build, meta)
+        long = _normalize([r for r in reports if r.source != PROFILE_SOURCE], design, build, meta)
         st.rows = len(long)
 
     with prof.stage("lineage mapping", detail=f"{design}/{build}") as st:
@@ -191,7 +194,7 @@ def extract_run(run_dir: Path, cfg: Config, prof: Profiler | None = None) -> Run
         st.rows = len(intent)
 
     return RunResult(design, build, run_dir, reports, lin.mapped, wide, perf, lin.lineage, lin.unmapped,
-                     lin.flags, errors, str(meta.get("status", "current")), intent)
+                     lin.flags, errors, str(meta.get("status", "current")), intent, profile=profile)
 
 
 def _normalize(reports: list[ParsedReport], design: str, build: str, meta: dict) -> pd.DataFrame:
@@ -336,15 +339,15 @@ def attach_activity_mode(wide: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFra
 
 
 def attach_identity(wide: pd.DataFrame, model: ModelRoot) -> pd.DataFrame:
-    """Add model_root / partition from the model root, placed right after fub (replica instances get fub@i)."""
-    ident = model.to_frame()[["fub", "model_root", "partition"]].drop_duplicates(subset=["fub"])
+    """Add model_root / partition / owner from the model root, placed right after fub (replica instances get fub@i)."""
+    ident = model.to_frame()[["fub", "model_root", "partition", "owner"]].drop_duplicates(subset=["fub"])
     base = wide["fub"].astype(str).str.split("@", n=1).str[0]
     inst = wide["fub"].astype(str).str.split("@", n=1).str[1]
     out = wide.assign(_base=base).merge(ident.rename(columns={"fub": "_base"}), on="_base", how="left").drop(columns="_base")
     out["model_root"] = out["model_root"].where(inst.isna(), out["model_root"] + "@" + inst.fillna(""))
-    cols = [c for c in out.columns if c not in ("model_root", "partition")]
+    cols = [c for c in out.columns if c not in ("model_root", "partition", "owner")]
     i = cols.index("fub") + 1
-    return out[cols[:i] + ["model_root", "partition"] + cols[i:]]
+    return out[cols[:i] + ["model_root", "partition", "owner"] + cols[i:]]
 
 
 def stamp_provenance(wide: pd.DataFrame, design: str, build: str, meta: dict, run_dir: Path) -> pd.DataFrame:
@@ -379,6 +382,30 @@ def pivot_perf_records(mapped: pd.DataFrame, design: str, build: str) -> pd.Data
     p.insert(0, "design", design)
     p.insert(1, "build", build)
     return p
+
+
+def pivot_profile_records(reports: list[ParsedReport], design: str, build: str, meta: dict) -> pd.DataFrame:
+    """Time-based power profile: one row per (workload, operating_point, window) with the profile metrics as columns
+    and file-level provenance, kept apart from the FUB dataset because its object is the design over time."""
+    cols = ["design", "build", "workload", "operating_point", "t_start_ns", "t_end_ns", *PROFILE_METRICS,
+            "source_file", "tool", "tool_version", "run_id"]
+    frames = []
+    for rep in reports:
+        r = rep.records
+        if not len(r) or "t_start_ns" not in r.columns:
+            continue
+        p = r.pivot_table(index=["t_start_ns", "t_end_ns"], columns="metric", values="value", aggfunc="first").reset_index()
+        p.columns.name = None
+        for m in PROFILE_METRICS:
+            if m not in p.columns:
+                p[m] = float("nan")
+        p["design"], p["build"], p["workload"], p["operating_point"] = design, build, rep.workload, rep.operating_point
+        p["source_file"], p["tool"], p["tool_version"] = str(rep.path), rep.tool, rep.tool_version
+        p["run_id"] = rep.run_id or meta.get("run_id")
+        frames.append(p[cols])
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    return pd.concat(frames, ignore_index=True).sort_values(["workload", "operating_point", "t_start_ns"]).reset_index(drop=True)
 
 
 # ----------------------------------------------------------------------------- orchestration
@@ -442,6 +469,7 @@ def store_results(project: Project, results: list[RunResult], cfg: Config, repla
         long = pd.concat([r.long for r in results], ignore_index=True) if results else pd.DataFrame()
         perf = pd.concat([r.perf for r in results], ignore_index=True) if results else pd.DataFrame()
         intent = pd.concat([r.intent for r in results if len(r.intent)], ignore_index=True) if any(len(r.intent) for r in results) else pd.DataFrame()
+        profile = pd.concat([r.profile for r in results if len(r.profile)], ignore_index=True) if any(len(r.profile) for r in results) else pd.DataFrame()
         lineage = pd.concat([r.lineage for r in results], ignore_index=True) if results else pd.DataFrame()
         unmapped = pd.concat([r.unmapped for r in results], ignore_index=True) if results else pd.DataFrame()
         report = validate(wide) if len(wide) else None
@@ -462,7 +490,8 @@ def store_results(project: Project, results: list[RunResult], cfg: Config, repla
             # always merge into the RAW dataset (never the sanitized view) so flagged rows are never lost
             old = load_dataset(project, cfg, raw=True)
             wide = pd.concat([old, wide], ignore_index=True).drop_duplicates(subset=list(KEY_COLUMNS), keep="last")
-            for name, new in (("measurements_long", long), ("lineage", lineage), ("unmapped", unmapped), ("performance", perf), ("power_intent", intent)):
+            for name, new in (("measurements_long", long), ("lineage", lineage), ("unmapped", unmapped), ("performance", perf), ("power_intent", intent),
+                              ("power_profile", profile)):
                 old_p = pdir / f"{name}.parquet"
                 if old_p.exists() and len(new) and {"design", "build"} <= set(new.columns):
                     prev = pd.read_parquet(old_p)
@@ -479,6 +508,8 @@ def store_results(project: Project, results: list[RunResult], cfg: Config, repla
                     unmapped = new
                 elif name == "performance":
                     perf = new
+                elif name == "power_profile":
+                    profile = new
                 else:
                     intent = new
         ds_path = write_table(wide, project.root / cfg.dataset)
@@ -487,6 +518,7 @@ def store_results(project: Project, results: list[RunResult], cfg: Config, repla
         write_table(unmapped, pdir / "unmapped.parquet")
         write_table(perf, pdir / "performance.parquet")
         write_table(intent, pdir / "power_intent.parquet")
+        write_table(profile, pdir / "power_profile.parquet")
         if len(rejected):
             write_table(rejected, project.root / cfg.rejected)
         # any previous sanitized dataset is now stale
@@ -497,6 +529,7 @@ def store_results(project: Project, results: list[RunResult], cfg: Config, repla
             "measurements": ds_path, "measurements_long": pdir / "measurements_long.parquet",
             "lineage": pdir / "lineage.parquet", "unmapped": pdir / "unmapped.parquet",
             "performance": pdir / "performance.parquet", "power_intent": pdir / "power_intent.parquet",
+            "power_profile": pdir / "power_profile.parquet",
         })
         _log_imports(project, results, ds_path)
 

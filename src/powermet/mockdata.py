@@ -8,6 +8,8 @@ Layout (one run directory per design x build):
         pprtl/<workload>_<op>/rtl_power.rpt
         pprtl/<workload>_<op>/physical_power.rpt
         primepower/<workload>_<op>/power_hier.rpt
+        primepower/<workload>_<op>/power_groups.rpt  (BE power by cell group: clock network, register, combinational, memory)
+        primepower/<workload>_<op>/power_profile.csv (time-based design power per window; peak/avg/energy per workload)
         primetime/<op>/timing_summary.rpt          (partition-level timing)
         starrc/parasitics_summary.rpt
         implementation/qor_summary.rpt
@@ -21,7 +23,11 @@ Layout (one run directory per design x build):
 With defects=True a handful of realistic problems are injected so `powermet sanitize`
 has something to find: alternate units (W, fF), a BE-renamed instance missing from the
 map, StarRC rows missing for some FUBs, a duplicated report row, a negative value,
-a near-zero BE value, and one superseded (stale) build.
+a near-zero BE value, and one superseded (stale) build. Three *power bugs* are also planted for
+`analyze anomalies`: a FUB whose clocks keep toggling at idle, a FUB whose dynamic power jumps in a
+later build with no physical or activity change, and a FUB that burns far more per unit of activity
+and capacitance than its peers (glitch-like); plus one time-based profile that disagrees with its
+averaged report.
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from powermet.demo import DemoData, DemoSpec, generate_all
+from powermet.demo import MEMORY_FUBS, DemoData, DemoSpec, generate_all
 
 
 BE_LAYOUTS = ("separate", "same_hierarchy", "replicated", "merged", "split", "mixed")
@@ -156,11 +162,52 @@ def _fmt_table(header: list[str], rows: list[list[str]], widths: list[int]) -> l
     return [line(header), "-" * sum(widths)] + [line(r) for r in rows]
 
 
+def plant_power_bugs(meas: pd.DataFrame, hier: pd.DataFrame, spec: DemoSpec) -> dict[str, str]:
+    """Modify the BE numbers in place so `analyze anomalies` has real power bugs to find. FE estimates are left
+    alone (a power bug is, almost by definition, what the RTL estimate did not predict). The bugs go on the
+    smallest FUBs of a design so design totals, correlations and models barely move. Returns what was planted."""
+    designs = list(meas["design"].unique())
+    builds = list(meas["build"].unique())
+    planted: dict[str, str] = {}
+
+    def smallest(design: str, skip: set[str]) -> str:
+        ref = meas[(meas.design == design) & (meas.build == builds[0]) & ~meas.fub.isin(skip)]
+        return str(ref.groupby("fub")["be_mw"].mean().sort_values().index[0])
+
+    used: set[str] = set()
+    d0 = designs[0]
+    if "idle" in spec.workloads and "typical" in spec.workloads:
+        fub = smallest(d0, used)
+        used.add(fub)
+        for (b, op), _ in meas[(meas.design == d0) & (meas.fub == fub)].groupby(["build", "operating_point"]):
+            typ = meas[(meas.design == d0) & (meas.fub == fub) & (meas.build == b) & (meas.operating_point == op) & (meas.workload == "typical")]
+            idl = (meas.design == d0) & (meas.fub == fub) & (meas.build == b) & (meas.operating_point == op) & (meas.workload == "idle")
+            if len(typ) and idl.any():
+                lk = float(typ["be_leakage_mw"].iloc[0])
+                meas.loc[idl, "be_mw"] = lk + 0.75 * max(float(typ["be_mw"].iloc[0]) - lk, 0.0)
+        planted["idle_clock_design"], planted["idle_clock_fub"] = d0, fub
+    if len(builds) >= 4:
+        fub = smallest(d0, used)
+        used.add(fub)
+        b_from = builds[len(builds) * 2 // 3]
+        sel = (meas.design == d0) & (meas.fub == fub) & (meas.build.isin(builds[builds.index(b_from):]))
+        meas.loc[sel, "be_mw"] = meas.loc[sel, "be_leakage_mw"] + (meas.loc[sel, "be_mw"] - meas.loc[sel, "be_leakage_mw"]) * 1.25
+        planted["regression_design"], planted["regression_fub"], planted["regression_build"] = d0, fub, b_from
+    if len(designs) > 1:
+        d1 = designs[1]
+        fub = smallest(d1, set())
+        sel = (meas.design == d1) & (meas.fub == fub)
+        meas.loc[sel, "be_mw"] = meas.loc[sel, "be_leakage_mw"] + (meas.loc[sel, "be_mw"] - meas.loc[sel, "be_leakage_mw"]) * 2.4
+        planted["glitch_design"], planted["glitch_fub"] = d1, fub
+    return planted
+
+
 def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: bool = True) -> tuple[Path, DemoData, list[str]]:
     spec = spec or DemoSpec(workloads=("idle", "typical", "compute", "memory"), operating_points=("eco", "nom", "turbo"))
     data = generate_all(spec)
     root = Path(root)
     rng = np.random.default_rng(spec.seed + 1)
+    prng = np.random.default_rng(spec.seed + 7)      # profile shapes: separate stream so other writers' draws are unchanged
     log: list[str] = []
     meas, hier, perf, meta = data.measurements, data.hierarchy, data.performance, data.metadata
     timing = data.timing
@@ -176,6 +223,10 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
     voltus_builds = set(builds[-2:])                                     # alternate engine only on recent builds
     upf_missing_part = (designs[0], builds[-1]) if defects else None     # newest build's UPF forgets one partition
     upf_v_mismatch = designs[2] if defects and len(designs) > 2 else None  # UPF turbo state disagrees with metadata
+    profile_mismatch = (designs[2 % len(designs)], builds[-1]) if defects else None   # time-based run on an older netlist
+    bugs = plant_power_bugs(meas, hier, spec) if defects else {}
+    for k, v in bugs.items():
+        log.append(f"power bug planted: {k} -> {v}")
 
     for (design, build), mrows in meas.groupby(["design", "build"], sort=True):
         run_dir = root / design / build
@@ -237,7 +288,8 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         top = design.lower() + "_top"
         objs, fmap = be_layout(h, spec.methodology, top)
         (run_dir / "mapping").mkdir(exist_ok=True)
-        fmap[["fub", "model_root", "partition", "fe_hier", "synth_object", "be_hier", "be_share"]].to_csv(
+        fmap["owner"] = fmap["fub"].map(h["owner"]) if "owner" in h.columns else None
+        fmap[["fub", "model_root", "partition", "fe_hier", "synth_object", "be_hier", "be_share", "owner"]].to_csv(
             run_dir / "mapping" / "fub_map.csv", index=False)
         if renamed_unmapped:          # BE renamed these after the map was exported: their objects will not resolve
             objs = objs.copy()
@@ -289,10 +341,61 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
                     if dup_pp and key in leaves and leaves[key] == v and ov[ov["path"] == key]["fub"].iloc[0] == dup_pp:
                         lines.append(row)
                 (out / "power_hier.rpt").write_text("\n".join(lines) + "\n")
+        # ---- power groups per workload x op (clock network / register / combinational / memory per BE object) and
+        # ---- time-based power profile per workload x op (design power per window)
+        for wl in wls:
+            for op in ops:
+                sub = mrows[(mrows.workload == wl) & (mrows.operating_point == op)].set_index("fub")
+                ov = object_values(objs, sub, ("be_mw", "be_leakage_mw", "cg_efficiency"))
+                out = run_dir / "primepower" / f"{wl}_{op}"
+                lines = ["*" * 60, "Report : power -hierarchy -groups", f"Design : {top}", f"Version: {m['primepower_version']}",
+                         f"Date   : {m['build_date']}", f"Run    : {run_id}", f"Scenario: {wl}@{op}", "Power Units = 1mW", "*" * 60,
+                         f"{'Hierarchy':56}{'clock_network':>15}{'register':>12}{'combinational':>15}{'memory':>12}{'Total':>12}",
+                         "-" * 122]
+                for _, o in ov.iterrows():
+                    v, lk = float(o["be_mw"]), min(float(o["be_leakage_mw"]), float(o["be_mw"]))
+                    if zero_pp == o["fub"]:
+                        v, lk = 0.0004, 0.0001
+                    dyn = max(v - lk, 0.0)
+                    cg = float(o["cg_efficiency"]) if "cg_efficiency" in ov.columns and pd.notna(o["cg_efficiency"]) else 0.8
+                    clock = 0.12 + 0.5 * (1.0 - cg)                     # poorly gated blocks spend more in the clock network
+                    if o["fub"] == bugs.get("idle_clock_fub") and design == bugs.get("idle_clock_design"):
+                        clock = 0.62
+                    is_mem = o["fub"].split("_")[0] in MEMORY_FUBS
+                    memv = 0.35 if is_mem else 0.0
+                    reg = (1.0 - clock - memv) * 0.45
+                    comb = 1.0 - clock - memv - reg
+                    # groups carry their share of leakage too, so the four columns reconstruct Total
+                    parts = [v * clock, v * reg, v * comb, v * memv]
+                    lines.append(f"{o['path']:56}{parts[0]:15.4f}{parts[1]:12.4f}{parts[2]:15.4f}{parts[3]:12.4f}{v:12.4f}")
+                (out / "power_groups.rpt").write_text("\n".join(lines) + "\n")
+
+                total = float(ov["be_mw"].sum())
+                leak_total = float(ov["be_leakage_mw"].sum())
+                n_win, interval = 40, 100.0
+                t = np.arange(n_win)
+                shape = {"idle": 0.03 * np.sin(t / 3.0),
+                         "compute": np.where((t % 10) < 4, 0.30, -0.20) + 0.04 * prng.standard_normal(n_win),
+                         "memory": 0.18 * np.sin(2 * np.pi * t / 8.0) + 0.02 * prng.standard_normal(n_win),
+                         "typical": 0.10 * np.sin(2 * np.pi * t / 13.0) + 0.05 * prng.standard_normal(n_win)}.get(wl, 0.05 * prng.standard_normal(n_win))
+                shape = shape - shape.mean()                              # average of the profile equals the averaged report
+                dyn_avg = max(total - leak_total, 0.0)
+                scale_p = 0.88 if profile_mismatch == (design, build) else 1.0
+                dyn_w = np.clip(dyn_avg * (1.0 + shape), 0.0, None) * scale_p
+                rows_p = ["# PrimePower time-based power profile (representative)",
+                          f"# Tool: PrimePower  Version: {m['primepower_version']}  Run: {run_id}  Scenario: {wl}@{op}",
+                          f"# Power units: mW   Time units: ns   Interval: {interval:g}",
+                          "t_start_ns,t_end_ns,total_mw,dynamic_mw,leakage_mw"]
+                for i in range(n_win):
+                    rows_p.append(f"{i * interval:.0f},{(i + 1) * interval:.0f},{dyn_w[i] + leak_total * scale_p:.3f},{dyn_w[i]:.3f},{leak_total * scale_p:.3f}")
+                (out / "power_profile.csv").write_text("\n".join(rows_p) + "\n")
+        if profile_mismatch == (design, build):
+            log.append(f"{design}/{build}: time-based power profile 12% below the averaged report (older netlist)")
         if pp_unit != "W":
             log.append(f"{design}/{build}: PrimePower reported in mW (unit variant)")
         if design == vectorless_design and "idle" in wls and build == builds[0]:
-            log.append(f"{design}/*: PrimePower 'idle' scenario is vectorless (default activity), values perturbed")
+            log.append(f"{design}/*: PrimePower 'idle' scenario is vectorless (default activity), values perturbed; "
+                       "its power_groups.rpt still comes from the SAIF run, so the groups do not reconstruct the total")
         if renamed_unmapped:
             log.append(f"{design}/{build}: BE renamed instances not in map: {sorted(renamed_unmapped)}")
         if dup_pp:
@@ -481,7 +584,7 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
 
     # budgets: design totals at ~2% under the final build (so late builds sit at risk) and partition budgets
     lines = ["# power budgets and convergence targets: scope = design | partition:<name> | fub:<name>; tolerance per milestone (%)",
-             "# metric = be_mw (default) | cdyn_pf (CdynTot, pF) | be_leakage_mw (LkgPwr) | be_dynamic_mw",
+             "# metric = be_mw (default) | cdyn_pf (Cdyn, pF) | be_leakage_mw (leakage power) | be_dynamic_mw",
              "[defaults]", 'workload = "typical"', 'operating_point = "nom"',
              "tolerance_pct = { rtl = 25, synthesis = 15, placement = 10, route = 5, signoff = 0 }", ""]
     last = builds[-1]
@@ -495,9 +598,9 @@ def write_mock_runs(root: str | Path, spec: DemoSpec | None = None, defects: boo
         dyn = (sub["be_mw"] - sub["be_leakage_mw"]).clip(lower=0)
         cdyn = float((dyn / (sub["voltage_v"] ** 2 * sub["frequency_ghz"])).sum())
         lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', 'metric = "cdyn_pf"', f"target = {cdyn * 0.96:.1f}",
-                  'note = "CdynTot: effective switched capacitance target, V/f independent"', ""]
+                  'note = "Cdyn: effective switched capacitance target, V/f independent"', ""]
         lines += ["[[budget]]", f'design = "{design}"', 'scope = "design"', 'metric = "be_leakage_mw"', f"target = {sub['be_leakage_mw'].sum() * 1.03:.1f}",
-                  'note = "LkgPwr at the nominal corner"', ""]
+                  'note = "leakage power at the nominal corner"', ""]
         hh = hier[hier.design == design]
         for i, part in enumerate(sorted(hh["partition"].unique())):
             fubs = hh[hh.partition == part]["fub"]

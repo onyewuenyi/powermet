@@ -50,6 +50,8 @@ CANONICAL_UNITS = {
     "wire_length_um": "um", "avg_net_length_um": "um", "bits_per_cycle": "bits", "net_count": "count",
     "be_voltus_mw": "mW", "cg_efficiency": "ratio", "be_leakage_mw": "mW", "fe_leakage_mw": "mW",
     "clock_period_ps": "ps", "wns_ps": "ps", "tns_ps": "ps", "violating_endpoints": "count",
+    "be_clock_mw": "mW", "be_register_mw": "mW", "be_comb_mw": "mW", "be_memory_mw": "mW",
+    "profile_total_mw": "mW", "profile_dynamic_mw": "mW", "profile_leakage_mw": "mW",
 }
 
 # multiplicative factors to canonical: (from_unit, to_unit) -> factor
