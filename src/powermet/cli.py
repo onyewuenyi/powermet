@@ -1196,7 +1196,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = argparse.ArgumentParser(
         prog="powermet",
-        description="Power Metrology & Modeling V0: FE <-> BE power correlation (local CLI).",
+        description="Power Metrology & Modeling: open power methodology infrastructure -- FE/BE correlation, "
+                    "build-validated models, timing-aware what-if, budgets/UPF/qualification, comparative power "
+                    "analysis, and Cdyn/leakage convergence (local CLI, no server).",
     )
     p.add_argument("--version", action="version", version=f"powermet {__version__}")
     p.add_argument("--profile", action="store_true", help="Print stage runtime/memory after the command.")

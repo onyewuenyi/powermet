@@ -5,9 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "powermet"
 version = "0.10.0"
-description = "Power Metrology & Modeling V0: FE <-> BE power correlation, local CLI"
+description = "Open-source power metrology, modeling, closure and analysis for hardware teams: post-layout EDA reports -> trusted correlation -> build-validated models -> timing-aware what-if -> convergence and power-bug triage (local Python CLI, no server)"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Charles Amanze Onyewuenyi" }]
+keywords = ["eda", "power-analysis", "chip-design", "asic", "soc", "physical-design", "semiconductor", "vlsi", "hardware-engineering"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "pandas>=1.5",
     "numpy>=1.23",
@@ -22,6 +34,11 @@ dependencies = [
 plots = ["matplotlib>=3.6"]
 all = ["matplotlib>=3.6", "psutil>=5.9"]
 dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/onyewuenyi/powermet"
+Repository = "https://github.com/onyewuenyi/powermet"
+"Field Guide" = "https://claude.ai/artifact/CfSbopPu9teDAD1fUaPmw1"
 
 [project.scripts]
 powermet = "powermet.cli:main"

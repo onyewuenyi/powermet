@@ -1,38 +1,64 @@
-# powermet — Power Metrology & Modeling (V0 → V3, with timing)
+# powermet
 
-Local command-line tool that bridges physical implementation and architectural decisions:
-post-layout data → trustworthy per-metric features → compact power/energy model → performance and
-timing integration → what-if. Power, timing (PrimeTime, partition level) and physical data share one
-canonical FUB identity (`model_root`).
+**Open power methodology infrastructure — for one engineer or a whole program.**
 
-No server, no REST API, no UI, no cloud. Everything lives under a local `.powermet/`
-directory you can delete to start over. Python 3.11+.
+Every chip company rebuilds the same thing in private: a way to pull post-layout EDA reports into a
+trustworthy dataset, correlate early power estimates against signoff, fit models that predict power
+before back-end is done, track a design's Cdyn and leakage targets to closure, and triage the power bugs
+that show up every build. That methodology gets built from scratch, in-house, non-transferably, over and
+over. powermet is that layer, open-sourced: a local Python CLI plus a documented playbook, built from
+public knowledge and current EDA tooling, meant to be forked and adapted rather than adopted whole.
 
-## Purpose
+No server, no SaaS, no account. `pip install -e .`, point it at your run directories, and it runs on a
+laptop. `.powermet/` is a plain local directory — delete it to start clean.
 
-A battle-tested set of abstractions and a general workflow, built from public knowledge and current
-tools, that can be applied to a company's power methodology in its own compute and execution
-environment for accelerator, GPU, ASIC or SoC projects. The reference setup is CPU-style (separate FE/BE
-hierarchies with a map, partition-level timing), but the unit
-of analysis (`fub`), the workloads and the data-movement terms are deliberately generic so the same
-pipeline transfers. Environment limitations are expected: they are absorbed by adapters, config and
-the files under `templates/`, not by the core abstractions. `docs/portability.md` lists what is
-expected to change, where it lands, and how the workflow stays current as signoff engines and
-activity flows change; `docs/tool-landscape.md` is the reference of current Synopsys, Cadence, Keysight
-and data/AI tools per methodology stage, each to be confirmed at the target company. `docs/ppa-convergence-playbook.md`
-is the milestone-by-milestone playbook for driving power to target with timing and area as constraints. `powermet sources` shows every adapter with the tool family and versions it
-was written against.
+## Why this is open source
 
-| Version | Question it answers | Commands |
+This isn't a product pitch — it's an argument for why the code and the methodology behind it should be
+public:
+
+- **A solo engineer** standing up FE→BE correlation for the first time gets a working pipeline —
+  identity, provenance, sanitization, build-validated models, timing feasibility — instead of a blank
+  Python file and a deadline.
+- **A team** retrofitting a shared power methodology gets patterns already tested against five synthetic
+  variants of the FE/BE relationship (same hierarchy, explicit map, replicated units, merged blocks,
+  split FUBs), instead of discovering each one the hard way in production.
+- **Neither has to start from zero**, and neither is locked into this exact shape: adapters, config and
+  `templates/` are the seams meant to be rewritten; the abstractions (`ModelRoot` identity, long-record
+  provenance, build-based validation, a technique registry, a closure playbook) are meant to survive the
+  rewrite.
+
+The `docs/` directory is deliberately useful on its own, independent of the code: `docs/tool-landscape.md`
+tracks which vendor tools plug into which stage, `docs/power-techniques.md` and `docs/power-analysis.md`
+catalogue optimization techniques and comparative-analysis rules with their trade-offs, and
+`docs/ppa-convergence-playbook.md` is a milestone-by-milestone playbook for driving power to target. Read
+those even if you never run a line of this code — that's the knowledge-sharing half of the project, not
+just documentation for the tool.
+
+It complements commercial signoff engines (PrimePower, PrimeTime, Voltus, Fusion Compiler, ...) and
+open EDA tooling (OpenROAD and friends) rather than competing with either — powermet is the metrology,
+correlation, convergence and analysis layer that sits on top of whatever produces the reports.
+
+MIT licensed. Contributions, forks and "here's how we adapted it" write-ups are all welcome — see
+[Contributing](#contributing).
+
+## What it does
+
+| Stage | Question it answers | Commands |
 |---|---|---|
-| **V0** | Can I correlate FE to BE? | `demo`, `data`, `analyze`, `model train/evaluate`, `report` |
-| **V1** | Can I build a trustworthy, automated methodology for that correlation? | `mock`, `ingest`, `sanitize`, `lineage`, `profile`, `--profile` |
-| **V2** | Can I predict BE power before BE is complete? | `model train --cv`, `model validate`, `model predict` |
-| **V3** | Can I answer workload / design what-if questions? | `workload summary`, `explore sweep/opmap/scenario`, `model export`, `integrate trace` |
-| **Timing** | What physical changes improve timing but hurt power? | `analyze deltas`, `analyze frontier`, timing-feasible `explore` |
-| **Closure** | Are we within budget at this milestone, is the power intent consistent, can I trust this engine? | `budget check`, `intent show`, `qualify`, `analyze hotspots` |
-| **Analysis** | Which numbers are wrong for what the block is doing, what is the bug, who owns it, did the fix land? Which window sets the peak? | `analyze anomalies`, `analyze profile` (`docs/power-analysis.md`) |
-| **Convergence** | Will the design hit its Cdyn and leakage power targets, and which techniques close the gap? | `converge --plan`, `techniques assess` |
+| **Extract & correlate** | Can I trust this data, and how well does FE predict BE? | `mock`/`ingest`, `sanitize`, `lineage`, `analyze summary/correlation/errors` |
+| **Model** | Can I predict BE power before back-end is complete? | `model train --cv`, `model validate`, `model predict` |
+| **What-if** | What does a workload or design change buy? | `workload summary`, `explore sweep/opmap/scenario`, `model export`, `integrate trace` |
+| **Timing** | What physical changes improved timing but cost power? | `analyze deltas`, `analyze frontier`, timing-feasible `explore` |
+| **Closure** | Are we within budget, is power intent consistent, can I trust this engine? | `budget check`, `intent show`, `qualify`, `analyze hotspots` |
+| **Analysis** | Which numbers are wrong for what the block is doing, who owns the bug, did the fix land? | `analyze anomalies`, `analyze profile` (`docs/power-analysis.md`) |
+| **Convergence** | Will the design hit its Cdyn and leakage targets, and what closes the gap? | `converge --plan`, `techniques assess` |
+
+The reference setup in the mock data is CPU-style (separate FE/BE hierarchies with a map, partition-level
+timing), but the unit of analysis (`fub`), the workloads and the data-movement terms are deliberately
+generic — the same pipeline is meant to transfer to a GPU, ASIC, SoC or AI-accelerator program.
+`docs/portability.md` lists what's expected to change at a new company and where it lands;
+`powermet sources` shows every adapter with the tool family and versions it was written against.
 
 ## Install
 
@@ -90,7 +116,7 @@ powermet report                               # .powermet/reports/power_metrolog
 The V0 flat-file path still works: `powermet demo generate`, `powermet data validate <file>`,
 `powermet data import <file>`.
 
-## Data sources (V1)
+## Data sources
 
 `powermet ingest` reads one run directory per design × build:
 
@@ -132,13 +158,13 @@ the problem each creates and the switch that handles it; profiles bundle the swi
 produces every layout (`--methodology`).
 
 **Identity.** The model root is the source of truth: `ModelRoot` (`identity.py`) loads the FUB list with
-`model_root` (e.g. `GPU_A.PCORE0.Scheduler`), partition and FE/BE hierarchy from `mapping/fub_map.csv`,
-and is the only place report object names are resolved to FUBs. `fub` is the short name. Reports whose run
-id or build disagree with `metadata.json` are dropped (`strict_consistency`) so FE and BE are never paired
-across signoff runs. FE and BE hierarchy paths are kept so a
-poorly correlating FUB can be drilled into. **Timing** is a partition attribute: PrimeTime reports per
-partition, the FUB map says which partition implements each FUB, and every FUB inherits its partition's
-WNS/TNS/Fmax.
+`model_root` (e.g. `GPU_A.PCORE0.Scheduler`), partition, an optional `owner` (team or engineer), and
+FE/BE hierarchy from `mapping/fub_map.csv`, and is the only place report object names are resolved to
+FUBs. `fub` is the short name. Reports whose run id or build disagree with `metadata.json` are dropped
+(`strict_consistency`) so FE and BE are never paired across signoff runs. FE and BE hierarchy paths are
+kept so a poorly correlating FUB can be drilled into. **Timing** is a partition attribute: PrimeTime
+reports per partition, the FUB map says which partition implements each FUB, and every FUB inherits its
+partition's WNS/TNS/Fmax.
 
 Each source is one module in `src/powermet/extract/` with `get_files(inputs)` (where the data is;
 **this is the function to change when the real location or naming is known**) and `parse(path)`
@@ -157,17 +183,19 @@ long provenance table. See `docs/extractors.md`.
 - **Sanitization**: per-row `quality_flags.parquet` and `measurements_sanitized.parquet` (usable rows).
   Checks: missing metrics, missing physical data, duplicates (dataset and source-report level), unit
   conversions and magnitude-based unit suspicion, negatives, near-zero BE, stale/superseded builds,
-  outliers, lineage mismatches, missing/inconsistent timing, unmapped objects. Plus a **per-metric trust
-  table** (`metric_quality.parquet`): coverage, association with BE power, stability of that association
-  across builds, unit conversions, outliers, verdict.
+  outliers, lineage mismatches, missing/inconsistent timing, power groups that don't reconstruct the
+  total, unmapped objects. Plus a **per-metric trust table** (`metric_quality.parquet`): coverage,
+  association with BE power, stability of that association across builds, unit conversions, outliers,
+  verdict.
 - **Fan-out**: `ingest plan` prints one worker command per run directory (wrapped in the scheduler
   template from config); `ingest run --partition-dir` extracts one run and writes only a Parquet partition
   (no dataset, no catalog, no locks); `ingest merge` is the single writer that validates, merges and
   catalogs. Serial and fan-out produce identical datasets (tested).
 - **Catalog**: `metrology.db` (SQLite) holds builds, source files with SHA-256 and tool versions, import
-  runs, quality runs, models and profiles; Parquet holds the measurements; DuckDB queries both.
+  runs, quality runs, models, budget status, anomaly findings and profiles; Parquet holds the
+  measurements; DuckDB queries both.
 - **Profiling**: every ingest/sanitize/analyze/train command appends stage wall/CPU time and peak RSS to
-  `cache/profiles.jsonl`; `--profile` prints it, `profile show` lists recent runs.
+  the catalog's `profile_run` table; `--profile` prints it, `profile show` lists recent runs.
 - **Models**: baseline (BE = FE physical), scaled baseline, linear OLS, physics-structured OLS
   (activity·C·V²·f + bits·distance·V²·f + area·V³ + FE physical), a **data-movement decomposition** model
   (cell switching + wire switching + bits × distance + leakage, no FE power: the compact analytical energy
@@ -205,6 +233,13 @@ long provenance table. See `docs/extractors.md`.
   vs engine, version vs version, vectorless vs SAIF) with a PASS / FAIL against a tolerance; `analyze
   hotspots` ranks power share, density, growth and clock-gating efficiency. Vectorless BE numbers carry
   `be_activity_mode` and are flagged lower-trust.
+- **Power analysis**: `analyze anomalies` runs a registry of comparative rules over the sanitized dataset —
+  idle vs busy dynamic power, power per unit activity × capacitance vs peers, a build regression net of
+  what activity and capacitance explain, creeping growth, clock-network dominance, replica divergence,
+  leakage share — each naming the likely bug class, the technique that usually fixes it, the FUB's
+  `owner`, and a new / persisting / cleared status against the previous build. `analyze profile` summarizes
+  an optional time-based power waveform per workload: peak window (the thermal/IR signoff vector), peak-to-
+  average, max step, energy, and reconciliation with the averaged report (`docs/power-analysis.md`).
 - **Integration**: `model export` writes a compact JSON model (per-FUB physical features, per-workload
   activity/traffic, operating points, DVFS, throughput scaling, partition timing); `integrate trace`
   evaluates a workload phase trace into a power / throughput / energy timeline with timing feasibility.
@@ -214,20 +249,39 @@ long provenance table. See `docs/extractors.md`.
 ```
 .powermet/
   config.toml                 features, split, sanitization thresholds, source patterns
-  metrology.db                SQLite catalog: build, source_file, import_run, quality_run, model, profile_run
-  data/processed/             measurements.parquet, measurements_long.parquet, lineage.parquet, unmapped.parquet,
-                              performance.parquet, quality_flags.parquet, metric_quality.parquet,
-                              measurements_sanitized.parquet, rejected.parquet
-  models/                     model_<ts>.joblib + model_<ts>.json, compact_power_model.json
-  reports/                    power_metrology_report.md, *.png (incl. power_timing_frontier.png)
-  cache/                      powermet.duckdb (views over the Parquet files)
+  metrology.db                SQLite catalog: build, source_file, import_run, quality_run, model,
+                               budget_status, anomaly, profile_run
+  data/processed/              measurements.parquet, measurements_long.parquet, lineage.parquet, unmapped.parquet,
+                               performance.parquet, power_intent.parquet, power_profile.parquet,
+                               quality_flags.parquet, metric_quality.parquet, measurements_sanitized.parquet,
+                               rejected.parquet
+  models/                      model_<ts>.joblib + model_<ts>.json, compact_power_model.json
+  reports/                     power_metrology_report.md, *.png (incl. power_timing_frontier.png)
+  cache/                       powermet.duckdb (views over the Parquet files)
 ```
+
+## The docs as a standalone knowledge base
+
+Everything in `docs/` is written to be read on its own — as patterns and trade-offs worth knowing even
+before you look at the code:
+
+| Doc | What it's for |
+|---|---|
+| `docs/methodology.md` | The full V0→V3 design: data model, derived metrics, validation, models, what-if, convergence |
+| `docs/methodology-variants.md` | Five real ways FE/BE hierarchies relate across companies, the problem each creates, the config that handles it |
+| `docs/extractors.md` | How to repoint an adapter at a real report tree: three levels, from config override to a rewritten parser |
+| `docs/portability.md` | What differs at a new company and where it lands; the adaptation checklist and rollout pieces |
+| `docs/power-techniques.md` | Clock gating, power gating, DVFS, multi-Vt and the rest: problem, mechanism, trade-off, considerations |
+| `docs/power-analysis.md` | The comparative-analysis rule catalogue: what each rule compares, the bug class it points at, the EDA report it needs |
+| `docs/ppa-convergence-playbook.md` | The milestone-by-milestone loop for driving a design to its power target with timing and area as constraints |
+| `docs/tool-landscape.md` | Current Synopsys, Cadence, Keysight and open-source tool options per stage, to confirm per company |
+| `docs/reusable-components.md` | Every liftable abstraction mapped to its module, dependencies and pinning tests |
 
 ## Lifting pieces into another pipeline
 
 `docs/reusable-components.md` maps every reusable abstraction (adapter contract, `ModelRoot` identity,
-`MeasurementStore`, `DatasetSlice`, model and check registries, catalog, profiler, compact model) to its
-module, its dependencies and the tests that pin its behaviour.
+`MeasurementStore`, `DatasetSlice`, model and check registries, the anomaly-rule registry, catalog,
+profiler, compact model) to its module, its dependencies and the tests that pin its behaviour.
 
 ## Development
 
@@ -235,13 +289,31 @@ module, its dependencies and the tests that pin its behaviour.
 .venv/bin/pytest -q
 ```
 
-`src/powermet/`: `cli.py`, `extract/` (base, metadata, pprtl, primepower, primetime, starrc, implementation,
-activity, perf), `identity.py`, `lineage.py`, `measurements.py`, `selection.py`, `pipeline.py`, `sanitize.py`,
-`catalog.py`, `profiling.py`, `mockdata.py`, `demo.py`, `schema.py`, `validation.py`, `ingest.py`, `storage.py`,
-`metrics.py`, `features.py`, `correlation.py`, `errors.py`, `summary.py`, `budgets.py`, `intent.py`, `qualify.py`,
-`hotspots.py`, `techniques.py`, `profiles.py`, `modeling.py`, `decomposition.py`,
-`deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `workload.py`, `explore.py`, `integrate.py`,
-`visualization.py`, `reporting.py` (`energy.py` is a compatibility facade).
+`src/powermet/`:
+- **CLI & config**: `cli.py`, `config.py`, `deps.py`, `textfmt.py`
+- **Extraction**: `extract/` (`base`, `metadata`, `pprtl`, `primepower`, `primetime`, `starrc`,
+  `implementation`, `saif`, `perf`, `voltus`, `power_groups`, `power_profile`), `ingest.py`, `pipeline.py`
+- **Identity & data model**: `identity.py`, `lineage.py`, `measurements.py`, `selection.py`, `schema.py`,
+  `storage.py`, `validation.py`
+- **Quality**: `sanitize.py`, `catalog.py`, `profiling.py`
+- **Fixtures**: `mockdata.py`, `demo.py`
+- **Correlation & models**: `metrics.py`, `features.py`, `correlation.py`, `errors.py`, `summary.py`,
+  `modeling.py`, `decomposition.py`
+- **Timing & performance**: `deltas.py`, `frontier.py`, `curves.py`, `whatif.py`, `workload.py`,
+  `explore.py`, `integrate.py`
+- **Closure & convergence**: `budgets.py`, `intent.py`, `qualify.py`, `hotspots.py`, `techniques.py`,
+  `convergence.py`, `profiles.py`
+- **Power analysis**: `anomalies.py`, `timeprofile.py`
+- **Output**: `visualization.py`, `reporting.py` (`energy.py` is a compatibility facade over
+  `decomposition.py`/`deltas.py`/`frontier.py`)
+
+## Contributing
+
+MIT licensed — fork it, cut the adapters down to one report you actually have, and keep the shape. Issues
+and PRs are welcome: a real report sample that a parser gets wrong, a new methodology variant, a new
+comparative-analysis rule, or a company-specific adapter contributed back as a template. Run
+`.venv/bin/pytest -q` before opening a PR; the mock generator with injected defects is the regression
+harness, so a new source or check should extend `mockdata.py` to exercise it without any proprietary data.
 
 ## Principles
 
@@ -249,3 +321,8 @@ Raw data is immutable; every number keeps its provenance; FUB is an analytical d
 hierarchy; no fake precision; every analysis is reproducible from input + config + command; explainable
 models before sophisticated ones; correlation is reported as association, never cause; what-if numbers are
 predictions to be validated against a real build.
+
+---
+
+For a visual tour of the whole pipeline — inputs, workflow, convergence, power-bug analysis and reuse, with
+figures generated from the mock set — see the [powermet Field Guide](https://claude.ai/artifact/CfSbopPu9teDAD1fUaPmw1).
